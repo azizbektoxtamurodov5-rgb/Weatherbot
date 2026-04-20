@@ -14,9 +14,22 @@ if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
 }
 
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
+  polling: {
+    interval: 1000,
+    autoStart: true,
+    params: {
+      timeout: 10,
+    },
+  },
+});
 
 console.log("Bot ishga tushdi...");
+
+bot.on("polling_error", (error) => {
+  const message = error.response?.body?.description || error.message;
+  console.error("Telegram polling error:", message);
+});
 
 // ===================== KANAL A'ZOLIGINI TEKSHIRISH =====================
 
@@ -89,6 +102,12 @@ function getOpenAiErrorMessage(error) {
   if (Buffer.isBuffer(data)) return data.toString();
   if (typeof data === "string") return data;
   return data?.error?.message || data?.message || error.message || "Noma'lum xatolik";
+}
+
+function isOpenAiQuotaError(error) {
+  const message = getOpenAiErrorMessage(error).toLowerCase();
+  const code = error.response?.data?.error?.code || "";
+  return code === "insufficient_quota" || message.includes("quota") || message.includes("billing");
 }
 
 async function askOpenAiForMath({ text, imageBase64, mimeType }) {
@@ -177,6 +196,10 @@ async function sendMathSolution(chatId, options) {
     solution = await askOpenAiForMath(options);
   } catch (error) {
     console.error("OpenAI math error:", getOpenAiErrorMessage(error));
+    if (isOpenAiQuotaError(error)) {
+      await bot.sendMessage(chatId, "❌ OpenAI hisobida kredit yoki billing yetmayapti. OpenAI platformasida billing/limitni tekshirib, keyin qayta urinib ko'ring.");
+      return;
+    }
     if (options.imageBase64) {
       await bot.sendMessage(chatId, "❌ Rasmni AI orqali o'qishda xatolik bo'ldi. Rasmni biroz yaqinroq/tiniqroq qilib qayta yuboring yoki misol shartini matn qilib yozib yuboring.");
     } else {
@@ -674,5 +697,17 @@ function sendHelp(chatId) {
   );
 }
 
+async function shutdown(signal) {
+  console.log(`${signal} qabul qilindi, bot to'xtatilmoqda...`);
+  try {
+    await bot.stopPolling();
+  } catch (error) {
+    console.error("Polling to'xtatishda xatolik:", error.message);
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("uncaughtException", (err) => console.error("Xatolik:", err.message));
 process.on("unhandledRejection", (err) => console.error("Promise xatolik:", err));
