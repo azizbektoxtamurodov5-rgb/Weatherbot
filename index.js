@@ -5,10 +5,12 @@ const cron = require("node-cron");
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc8550fe0d";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OpenAi || process.env.OPENAI;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.Gemini || process.env.GEMINI;
 const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-4o";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
@@ -69,6 +71,14 @@ async function checkSubscription(chatId, userId) {
 
 function isOpenAiReady() {
   return Boolean(OPENAI_API_KEY);
+}
+
+function isGeminiReady() {
+  return Boolean(GEMINI_API_KEY);
+}
+
+function isAiReady() {
+  return isGeminiReady() || isOpenAiReady();
 }
 
 function looksLikeMath(text) {
@@ -156,6 +166,56 @@ async function askOpenAiForMath({ text, imageBase64, mimeType }) {
   return response.data.choices?.[0]?.message?.content?.trim() || "Yechim topilmadi.";
 }
 
+async function askGeminiForMath({ text, imageBase64, mimeType }) {
+  if (!isGeminiReady()) {
+    throw new Error("GEMINI_API_KEY kerak");
+  }
+
+  const prompt = `${text || "Rasmdagi matematika misolini o'qib yech."}
+
+Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib ol. Javobni o'zbek tilida ber. Avval misol shartini qisqa yoz, keyin bosqichma-bosqich yech, oxirida yakuniy javobni alohida ko'rsat. O'quvchiga tushunarli, sodda qilib tushuntir. Agar rasmda misol aniq ko'rinmasa, nima yetishmayotganini ayt.`;
+
+  const parts = [{ text: prompt }];
+  if (imageBase64 && mimeType) {
+    parts.push({
+      inline_data: {
+        mime_type: mimeType,
+        data: imageBase64,
+      },
+    });
+  }
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1800,
+      },
+    },
+    {
+      params: { key: GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json" },
+      timeout: 90000,
+    }
+  );
+
+  const partsText = response.data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("")
+    .trim();
+
+  return partsText || "Yechim topilmadi.";
+}
+
+async function askAiForMath(options) {
+  if (isGeminiReady()) {
+    return askGeminiForMath(options);
+  }
+  return askOpenAiForMath(options);
+}
+
 async function createVoiceExplanation(solution) {
   if (!isOpenAiReady()) {
     throw new Error("OPENAI_API_KEY kerak");
@@ -183,9 +243,30 @@ async function createVoiceExplanation(solution) {
   return Buffer.from(response.data);
 }
 
+async function createFreeAudioExplanation(solution) {
+  const voiceText = stripMarkdown(solution)
+    .replace(/\s+/g, " ")
+    .slice(0, 900);
+  const response = await axios.get("https://translate.google.com/translate_tts", {
+    params: {
+      ie: "UTF-8",
+      client: "tw-ob",
+      tl: "uz",
+      q: voiceText,
+    },
+    responseType: "arraybuffer",
+    timeout: 60000,
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+    },
+  });
+
+  return Buffer.from(response.data);
+}
+
 async function sendMathSolution(chatId, options) {
-  if (!isOpenAiReady()) {
-    await bot.sendMessage(chatId, "🧮 Matematika funksiyasi uchun Railway Variables ichiga OPENAI_API_KEY qo'shish kerak.");
+  if (!isAiReady()) {
+    await bot.sendMessage(chatId, "🧮 Matematika funksiyasi uchun Railway Variables ichiga GEMINI_API_KEY yoki OPENAI_API_KEY qo'shish kerak.");
     return;
   }
 
@@ -193,11 +274,11 @@ async function sendMathSolution(chatId, options) {
 
   let solution;
   try {
-    solution = await askOpenAiForMath(options);
+    solution = await askAiForMath(options);
   } catch (error) {
-    console.error("OpenAI math error:", getOpenAiErrorMessage(error));
+    console.error("AI math error:", getOpenAiErrorMessage(error));
     if (isOpenAiQuotaError(error)) {
-      await bot.sendMessage(chatId, "❌ OpenAI hisobida kredit yoki billing yetmayapti. OpenAI platformasida billing/limitni tekshirib, keyin qayta urinib ko'ring.");
+      await bot.sendMessage(chatId, "❌ AI hisobida kredit yoki limit yetmayapti. Agar OpenAI ishlamayotgan bo'lsa, Railway Variables ichiga GEMINI_API_KEY qo'shing.");
       return;
     }
     if (options.imageBase64) {
@@ -212,10 +293,15 @@ async function sendMathSolution(chatId, options) {
   }
 
   try {
-    const voice = await createVoiceExplanation(solution);
-    await bot.sendVoice(chatId, voice, {}, { filename: "tushuntirish.ogg", contentType: "audio/ogg" });
+    if (isOpenAiReady()) {
+      const voice = await createVoiceExplanation(solution);
+      await bot.sendVoice(chatId, voice, {}, { filename: "tushuntirish.ogg", contentType: "audio/ogg" });
+    } else {
+      const audio = await createFreeAudioExplanation(solution);
+      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.mp3", contentType: "audio/mpeg" });
+    }
   } catch (error) {
-    console.error("Voice error:", error.response?.data?.toString?.() || error.message);
+    console.error("Voice error:", getOpenAiErrorMessage(error));
     await bot.sendMessage(chatId, "Yozma yechim tayyor. Ovozli tushuntirishni yuborishda xatolik bo'ldi.");
   }
 }
