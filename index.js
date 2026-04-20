@@ -4,7 +4,7 @@ const cron = require("node-cron");
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc8550fe0d";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OpenAi || process.env.OPENAI;
 const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
