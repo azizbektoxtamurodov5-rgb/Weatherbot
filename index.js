@@ -2,9 +2,15 @@ const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const cron = require("node-cron");
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8607609282:AAEtdAifqTtCC3-1teOSX0LLwmBgGGQl-5Q";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc8550fe0d";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+if (!TELEGRAM_BOT_TOKEN) {
+  throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
+}
 
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
@@ -42,6 +48,141 @@ async function checkSubscription(chatId, userId) {
     return false;
   }
   return true;
+}
+
+// ===================== MATEMATIKA =====================
+
+function isOpenAiReady() {
+  return Boolean(OPENAI_API_KEY);
+}
+
+function looksLikeMath(text) {
+  const value = text.toLowerCase();
+  return /\d/.test(value) && /[+\-*/=^√()xxyy]/i.test(value) ||
+    /tenglama|misol|hisobla|yech|foiz|kasr|ildiz|daraja|integral|limit|geometriya|algebra/.test(value);
+}
+
+function chunkText(text, maxLength = 3800) {
+  const chunks = [];
+  let rest = text;
+  while (rest.length > maxLength) {
+    const cut = rest.lastIndexOf("\n", maxLength);
+    const index = cut > 1000 ? cut : maxLength;
+    chunks.push(rest.slice(0, index));
+    rest = rest.slice(index).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+function stripMarkdown(text) {
+  return text
+    .replace(/[*_`#>\[\]()]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function askOpenAiForMath({ text, imageBase64, mimeType }) {
+  if (!isOpenAiReady()) {
+    throw new Error("OPENAI_API_KEY kerak");
+  }
+
+  const content = [
+    {
+      type: "text",
+      text: `${text || "Rasmdagi matematika misolini o'qib yech."}\n\nJavobni o'zbek tilida ber. Avval misolni qisqa yoz, keyin bosqichma-bosqich yech, oxirida yakuniy javobni alohida ko'rsat. O'quvchiga tushunarli, sodda qilib tushuntir. Agar rasmda misol aniq ko'rinmasa, nima yetishmayotganini ayt.`,
+    },
+  ];
+
+  if (imageBase64 && mimeType) {
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+    });
+  }
+
+  const response = await axios.post(
+    `${OPENAI_BASE_URL}/chat/completions`,
+    {
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content: "Sen tajribali matematika o'qituvchisisan. O'zbek tilida juda sodda, bosqichma-bosqich tushuntirasan. Noto'g'ri ishonch bilan javob berma.",
+        },
+        { role: "user", content },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 90000,
+    }
+  );
+
+  return response.data.choices?.[0]?.message?.content?.trim() || "Yechim topilmadi.";
+}
+
+async function createVoiceExplanation(solution) {
+  if (!isOpenAiReady()) {
+    throw new Error("OPENAI_API_KEY kerak");
+  }
+
+  const voiceText = stripMarkdown(solution).slice(0, 1800);
+  const response = await axios.post(
+    `${OPENAI_BASE_URL}/audio/speech`,
+    {
+      model: "tts-1",
+      voice: "alloy",
+      input: `Quyidagi matematika yechimini o'zbek tilida o'quvchiga sekin va tushunarli qilib aytib ber: ${voiceText}`,
+      response_format: "opus",
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      responseType: "arraybuffer",
+      timeout: 90000,
+    }
+  );
+
+  return Buffer.from(response.data);
+}
+
+async function sendMathSolution(chatId, options) {
+  if (!isOpenAiReady()) {
+    await bot.sendMessage(chatId, "🧮 Matematika funksiyasi uchun Railway Variables ichiga OPENAI_API_KEY qo'shish kerak.");
+    return;
+  }
+
+  await bot.sendMessage(chatId, "🧮 Misolni yechyapman, biroz kuting...");
+
+  const solution = await askOpenAiForMath(options);
+  for (const part of chunkText(`🧮 Yechim:\n\n${solution}`)) {
+    await bot.sendMessage(chatId, part);
+  }
+
+  try {
+    const voice = await createVoiceExplanation(solution);
+    await bot.sendVoice(chatId, voice, {}, { filename: "tushuntirish.ogg", contentType: "audio/ogg" });
+  } catch (error) {
+    console.error("Voice error:", error.response?.data?.toString?.() || error.message);
+    await bot.sendMessage(chatId, "Yozma yechim tayyor. Ovozli tushuntirishni yuborishda xatolik bo'ldi.");
+  }
+}
+
+async function downloadTelegramPhoto(fileId) {
+  const fileUrl = await bot.getFileLink(fileId);
+  const response = await axios.get(fileUrl, { responseType: "arraybuffer", timeout: 60000 });
+  const mimeType = response.headers["content-type"] || "image/jpeg";
+  return {
+    imageBase64: Buffer.from(response.data).toString("base64"),
+    mimeType,
+  };
 }
 
 // ===================== WEATHER =====================
@@ -198,8 +339,8 @@ const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "🌤️ Hozirgi ob-havo" }, { text: "📅 5 kunlik bashorat" }],
     [{ text: "🏙️ Viloyatlar ro'yxati" }, { text: "⭐ Jizzax / Zomin" }],
+    [{ text: "🧮 Matematik misol yechish" }, { text: "ℹ️ Yordam" }],
     [{ text: "🔔 Avtomatik bildirishnomalar" }, { text: "❌ Bildirishnomani o'chirish" }],
-    [{ text: "ℹ️ Yordam" }],
   ],
   resize_keyboard: true,
 };
@@ -264,15 +405,34 @@ bot.onText(/\/start/, async (msg) => {
   const name = msg.from?.first_name || "Foydalanuvchi";
   bot.sendMessage(chatId,
     `Salom, <b>${name}</b>! 🌤️\n\n` +
-    `Men <b>Ob-havo Botman</b> — O'zbekiston ob-havosini ko'rsataman!\n\n` +
+    `Men <b>Ob-havo va Matematika Botman</b>.\n\n` +
     `🌟 <b>Imkoniyatlarim:</b>\n` +
     `• Har qanday viloyat ob-havosi\n` +
     `• ⭐ Jizzax viloyati va Zomin tumani\n` +
     `• 📅 5 kunlik bashorat\n` +
+    `• 🧮 Matematika misolini rasm yoki matndan yechish\n` +
+    `• 🔊 Yechimni ovozli tushuntirish\n` +
     `• 🔔 Har kuni 08:00 ertalab va 21:00 kechqurun avtomatik xabar\n\n` +
     `Quyidagi tugmalardan foydalaning 👇`,
     { parse_mode: "HTML", reply_markup: MAIN_KEYBOARD }
   );
+});
+
+bot.onText(/\/math(?:\s+(.+))?/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from?.id || chatId;
+  if (!(await checkSubscription(chatId, userId))) return;
+  const problem = match?.[1]?.trim();
+  if (!problem) {
+    await bot.sendMessage(chatId, "🧮 Misolni /math dan keyin yozing yoki rasm qilib yuboring.\nMasalan: /math 2x + 5 = 13");
+    return;
+  }
+  try {
+    await sendMathSolution(chatId, { text: problem });
+  } catch (error) {
+    console.error("Math error:", error.response?.data || error.message);
+    await bot.sendMessage(chatId, "❌ Misolni yechishda xatolik bo'ldi. Keyinroq qayta urinib ko'ring.");
+  }
 });
 
 bot.onText(/\/jizzax/, async (msg) => {
@@ -319,9 +479,21 @@ bot.onText(/\/unsubscribe/, (msg) => {
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
-  const text = msg.text || "";
+  const text = msg.text || msg.caption || "";
   if (text.startsWith("/")) return;
   if (!(await checkSubscription(chatId, userId))) return;
+
+  if (msg.photo?.length) {
+    try {
+      const largestPhoto = msg.photo[msg.photo.length - 1];
+      const image = await downloadTelegramPhoto(largestPhoto.file_id);
+      await sendMathSolution(chatId, { text: text || "Rasmdagi matematika misolini yech.", ...image });
+    } catch (error) {
+      console.error("Photo math error:", error.response?.data || error.message);
+      await bot.sendMessage(chatId, "❌ Rasmni o'qish yoki misolni yechishda xatolik bo'ldi. Rasm tiniqroq bo'lsa, qayta yuboring.");
+    }
+    return;
+  }
 
   if (text === "🌤️ Hozirgi ob-havo") {
     await sendCityWeather(chatId, getUserQuery(userId), getUserLabel(userId));
@@ -331,6 +503,8 @@ bot.on("message", async (msg) => {
     bot.sendMessage(chatId, "🏙️ <b>Shahar tanlang:</b>", { parse_mode: "HTML", reply_markup: CITY_KEYBOARD });
   } else if (text === "⭐ Jizzax / Zomin") {
     await sendJizzaxZomin(chatId);
+  } else if (text === "🧮 Matematik misol yechish") {
+    bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
     bot.sendMessage(chatId,
@@ -348,12 +522,19 @@ bot.on("message", async (msg) => {
       userCity.set(userId, city.query);
       updateChatCity(chatId, city.query, city.label);
       await sendCityWeather(chatId, city.query, city.label);
+    } else if (looksLikeMath(text)) {
+      try {
+        await sendMathSolution(chatId, { text });
+      } catch (error) {
+        console.error("Math text error:", error.response?.data || error.message);
+        await bot.sendMessage(chatId, "❌ Misolni yechishda xatolik bo'ldi. Keyinroq qayta urinib ko'ring.");
+      }
     } else {
       try {
         const w = await getCurrentWeather(`${text},UZ`);
         bot.sendMessage(chatId, formatWeather(w, `📍 ${w.city}`), { parse_mode: "HTML", reply_markup: MAIN_KEYBOARD });
       } catch {
-        bot.sendMessage(chatId, `❌ "${text}" shahri topilmadi.\n\nRo'yxatdan tanlang:`, { reply_markup: CITY_KEYBOARD });
+        bot.sendMessage(chatId, `❌ "${text}" shahri topilmadi.\n\nMatematika misoli bo'lsa /math bilan yuboring yoki rasm tashlang.`, { reply_markup: CITY_KEYBOARD });
       }
     }
   }
@@ -449,7 +630,7 @@ async function sendJizzaxZomin(chatId) {
 
 function sendHelp(chatId) {
   bot.sendMessage(chatId,
-    `ℹ️ <b>Ob-havo Bot — Yordam</b>\n\n` +
+    `ℹ️ <b>Ob-havo va Matematika Bot — Yordam</b>\n\n` +
     `<b>Buyruqlar:</b>\n` +
     `/start — Botni ishga tushirish\n` +
     `/weather — Hozirgi ob-havo\n` +
@@ -457,8 +638,11 @@ function sendHelp(chatId) {
     `/jizzax — Jizzax viloyati\n` +
     `/zomin — Zomin tumani\n` +
     `/cities — Shaharlar ro'yxati\n` +
+    `/math misol — Matematik misolni yechish\n` +
     `/subscribe — Bildirishnomani yoqish\n` +
     `/unsubscribe — Bildirishnomani o'chirish\n\n` +
+    `<b>Matematika:</b>\n` +
+    `🧮 Misolni matn qilib yozing yoki rasm qilib yuboring. Bot yozma yechim va ovozli tushuntirish yuboradi.\n\n` +
     `<b>Avtomatik xabarlar:</b>\n` +
     `🌅 08:00 — Bugungi ob-havo\n` +
     `🌙 21:00 — Ertangi kun bashorati\n` +
