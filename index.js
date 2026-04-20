@@ -5,12 +5,12 @@ const cron = require("node-cron");
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc8550fe0d";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OpenAi || process.env.OPENAI;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.Gemini || process.env.GEMINI;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.Gemini || process.env.GEMINI || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || process.env.GEMENI_API_KEY;
 const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-4o";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
@@ -114,6 +114,18 @@ function getOpenAiErrorMessage(error) {
   return data?.error?.message || data?.message || error.message || "Noma'lum xatolik";
 }
 
+function getAiErrorForUser(error) {
+  const status = error.response?.status;
+  const message = getOpenAiErrorMessage(error);
+  const cleanMessage = String(message).replace(/\s+/g, " ").slice(0, 450);
+  if (status === 400) return `AI so'rov formati yoki rasmda muammo bor: ${cleanMessage}`;
+  if (status === 401 || status === 403) return `Gemini/OpenAI API kaliti ishlamayapti yoki ruxsat berilmagan: ${cleanMessage}`;
+  if (status === 404) return `AI modeli topilmadi. Railway Variables ichida GEMINI_MODEL bo'lsa o'chirib tashlang yoki gemini-2.5-flash qiling: ${cleanMessage}`;
+  if (status === 429) return `AI limit/quota tugagan yoki vaqtincha cheklov bor: ${cleanMessage}`;
+  if (status >= 500) return `AI serverida vaqtincha xatolik bor: ${cleanMessage}`;
+  return cleanMessage;
+}
+
 function isOpenAiQuotaError(error) {
   const message = getOpenAiErrorMessage(error).toLowerCase();
   const code = error.response?.data?.error?.code || "";
@@ -211,7 +223,12 @@ Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib
 
 async function askAiForMath(options) {
   if (isGeminiReady()) {
-    return askGeminiForMath(options);
+    try {
+      return await askGeminiForMath(options);
+    } catch (error) {
+      if (!isOpenAiReady()) throw error;
+      console.error("Gemini math error, trying OpenAI:", getOpenAiErrorMessage(error));
+    }
   }
   return askOpenAiForMath(options);
 }
@@ -278,13 +295,13 @@ async function sendMathSolution(chatId, options) {
   } catch (error) {
     console.error("AI math error:", getOpenAiErrorMessage(error));
     if (isOpenAiQuotaError(error)) {
-      await bot.sendMessage(chatId, "❌ AI hisobida kredit yoki limit yetmayapti. Agar OpenAI ishlamayotgan bo'lsa, Railway Variables ichiga GEMINI_API_KEY qo'shing.");
+      await bot.sendMessage(chatId, `❌ AI limit/quota muammosi: ${getAiErrorForUser(error)}\n\nRailway Variables ichida GEMINI_API_KEY to'g'ri qo'yilganini tekshiring.`);
       return;
     }
     if (options.imageBase64) {
-      await bot.sendMessage(chatId, "❌ Rasmni AI orqali o'qishda xatolik bo'ldi. Rasmni biroz yaqinroq/tiniqroq qilib qayta yuboring yoki misol shartini matn qilib yozib yuboring.");
+      await bot.sendMessage(chatId, `❌ Rasmni AI orqali o'qishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}\n\nRasm tiniq bo'lsa ham shu chiqsa, Railway Variables ichida GEMINI_API_KEY va GEMINI_MODEL ni tekshiring.`);
     } else {
-      await bot.sendMessage(chatId, "❌ Misolni yechishda xatolik bo'ldi. Iltimos, misolni aniqroq qilib qayta yuboring.");
+      await bot.sendMessage(chatId, `❌ Misolni yechishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}`);
     }
     return;
   }
