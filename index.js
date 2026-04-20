@@ -7,6 +7,8 @@ const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OpenAi || process.env.OPENAI;
 const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
+const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-4o";
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
@@ -82,30 +84,39 @@ function stripMarkdown(text) {
     .trim();
 }
 
+function getOpenAiErrorMessage(error) {
+  const data = error.response?.data;
+  if (Buffer.isBuffer(data)) return data.toString();
+  if (typeof data === "string") return data;
+  return data?.error?.message || data?.message || error.message || "Noma'lum xatolik";
+}
+
 async function askOpenAiForMath({ text, imageBase64, mimeType }) {
   if (!isOpenAiReady()) {
     throw new Error("OPENAI_API_KEY kerak");
   }
 
+  const model = imageBase64 ? OPENAI_IMAGE_MODEL : OPENAI_TEXT_MODEL;
   const content = [
     {
       type: "text",
-      text: `${text || "Rasmdagi matematika misolini o'qib yech."}\n\nJavobni o'zbek tilida ber. Avval misolni qisqa yoz, keyin bosqichma-bosqich yech, oxirida yakuniy javobni alohida ko'rsat. O'quvchiga tushunarli, sodda qilib tushuntir. Agar rasmda misol aniq ko'rinmasa, nima yetishmayotganini ayt.`,
+      text: `${text || "Rasmdagi matematika misolini o'qib yech."}\n\nRasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib ol. Javobni o'zbek tilida ber. Avval misol shartini qisqa yoz, keyin bosqichma-bosqich yech, oxirida yakuniy javobni alohida ko'rsat. O'quvchiga tushunarli, sodda qilib tushuntir. Agar rasmda misol aniq ko'rinmasa, nima yetishmayotganini ayt.`,
     },
   ];
 
   if (imageBase64 && mimeType) {
     content.push({
       type: "image_url",
-      image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+      image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "high" },
     });
   }
 
   const response = await axios.post(
     `${OPENAI_BASE_URL}/chat/completions`,
     {
-      model: "gpt-4o-mini",
+      model,
       temperature: 0.2,
+      max_tokens: 1600,
       messages: [
         {
           role: "system",
@@ -161,7 +172,18 @@ async function sendMathSolution(chatId, options) {
 
   await bot.sendMessage(chatId, "🧮 Misolni yechyapman, biroz kuting...");
 
-  const solution = await askOpenAiForMath(options);
+  let solution;
+  try {
+    solution = await askOpenAiForMath(options);
+  } catch (error) {
+    console.error("OpenAI math error:", getOpenAiErrorMessage(error));
+    if (options.imageBase64) {
+      await bot.sendMessage(chatId, "❌ Rasmni AI orqali o'qishda xatolik bo'ldi. Rasmni biroz yaqinroq/tiniqroq qilib qayta yuboring yoki misol shartini matn qilib yozib yuboring.");
+    } else {
+      await bot.sendMessage(chatId, "❌ Misolni yechishda xatolik bo'ldi. Iltimos, misolni aniqroq qilib qayta yuboring.");
+    }
+    return;
+  }
   for (const part of chunkText(`🧮 Yechim:\n\n${solution}`)) {
     await bot.sendMessage(chatId, part);
   }
@@ -178,7 +200,8 @@ async function sendMathSolution(chatId, options) {
 async function downloadTelegramPhoto(fileId) {
   const fileUrl = await bot.getFileLink(fileId);
   const response = await axios.get(fileUrl, { responseType: "arraybuffer", timeout: 60000 });
-  const mimeType = response.headers["content-type"] || "image/jpeg";
+  let mimeType = response.headers["content-type"] || "image/jpeg";
+  if (!mimeType.startsWith("image/")) mimeType = "image/jpeg";
   return {
     imageBase64: Buffer.from(response.data).toString("base64"),
     mimeType,
