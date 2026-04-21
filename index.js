@@ -190,6 +190,31 @@ async function askOpenAiForMath({ text, imageBase64, mimeType }) {
   return response.data.choices?.[0]?.message?.content?.trim() || "Yechim topilmadi.";
 }
 
+const GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientGeminiError(error) {
+  const status = error.response?.status;
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+  const message = String(getOpenAiErrorMessage(error)).toLowerCase();
+  return message.includes("overload") || message.includes("high demand") || message.includes("unavailable") || message.includes("try again");
+}
+
+async function callGeminiOnce(model, body) {
+  return axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    body,
+    {
+      params: { key: GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json" },
+      timeout: 120000,
+    }
+  );
+}
+
 async function askGeminiForMath({ text, imageBase64, mimeType }) {
   if (!isGeminiReady()) {
     throw new Error("GEMINI_API_KEY kerak");
@@ -215,21 +240,36 @@ Quyidagi qoidalarga qat'iy amal qil:
     });
   }
 
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 4096,
-      },
+  const body = {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 4096,
     },
-    {
-      params: { key: GEMINI_API_KEY },
-      headers: { "Content-Type": "application/json" },
-      timeout: 120000,
+  };
+
+  const modelsToTry = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== GEMINI_MODEL)];
+  let response;
+  let lastError;
+  outer: for (const model of modelsToTry) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await callGeminiOnce(model, body);
+        lastError = null;
+        break outer;
+      } catch (error) {
+        lastError = error;
+        if (!isTransientGeminiError(error)) {
+          if (model !== modelsToTry[modelsToTry.length - 1] && error.response?.status === 404) {
+            break;
+          }
+          throw error;
+        }
+        await sleep(1500 * (attempt + 1));
+      }
     }
-  );
+  }
+  if (!response) throw lastError;
 
   const candidate = response.data.candidates?.[0];
   const blockReason = response.data.promptFeedback?.blockReason;
