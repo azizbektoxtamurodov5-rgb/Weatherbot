@@ -190,7 +190,7 @@ async function askOpenAiForMath({ text, imageBase64, mimeType }) {
   return response.data.choices?.[0]?.message?.content?.trim() || "Yechim topilmadi.";
 }
 
-const GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
+const GEMINI_FALLBACK_MODELS = ["gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
