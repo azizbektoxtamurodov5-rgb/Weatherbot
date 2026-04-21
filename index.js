@@ -213,12 +213,21 @@ Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib
     }
   );
 
-  const partsText = response.data.candidates?.[0]?.content?.parts
+  const candidate = response.data.candidates?.[0];
+  const blockReason = response.data.promptFeedback?.blockReason;
+  if (blockReason) {
+    throw new Error(`Gemini rasmni qabul qilmadi (blockReason: ${blockReason}). Rasmda ruxsat etilmagan kontent bo'lishi mumkin.`);
+  }
+  const partsText = candidate?.content?.parts
     ?.map((part) => part.text || "")
     .join("")
     .trim();
 
-  return partsText || "Yechim topilmadi.";
+  if (!partsText) {
+    const finishReason = candidate?.finishReason || "noma'lum";
+    throw new Error(`Gemini bo'sh javob qaytardi (finishReason: ${finishReason}). Rasmni tiniqroq, yorug'roq qilib qayta yuboring yoki misolni matn qilib yozing.`);
+  }
+  return partsText;
 }
 
 async function askAiForMath(options) {
@@ -260,25 +269,58 @@ async function createVoiceExplanation(solution) {
   return Buffer.from(response.data);
 }
 
-async function createFreeAudioExplanation(solution) {
-  const voiceText = stripMarkdown(solution)
-    .replace(/\s+/g, " ")
-    .slice(0, 900);
-  const response = await axios.get("https://translate.google.com/translate_tts", {
-    params: {
-      ie: "UTF-8",
-      client: "tw-ob",
-      tl: "uz",
-      q: voiceText,
-    },
-    responseType: "arraybuffer",
-    timeout: 60000,
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-    },
-  });
+function splitForTts(text, maxLen) {
+  const result = [];
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  let current = "";
+  for (const sentence of sentences) {
+    if (sentence.length > maxLen) {
+      if (current) { result.push(current); current = ""; }
+      for (let i = 0; i < sentence.length; i += maxLen) {
+        result.push(sentence.slice(i, i + maxLen));
+      }
+      continue;
+    }
+    if ((current + " " + sentence).trim().length > maxLen) {
+      if (current) result.push(current);
+      current = sentence;
+    } else {
+      current = (current ? current + " " : "") + sentence;
+    }
+  }
+  if (current) result.push(current);
+  return result.filter(Boolean);
+}
 
-  return Buffer.from(response.data);
+async function createFreeAudioExplanation(solution) {
+  const cleaned = stripMarkdown(solution).replace(/\s+/g, " ").trim();
+  const limited = cleaned.slice(0, 1400);
+  const chunks = splitForTts(limited, 180);
+  const buffers = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const response = await axios.get("https://translate.google.com/translate_tts", {
+      params: {
+        ie: "UTF-8",
+        client: "tw-ob",
+        tl: "uz",
+        q: chunk,
+        textlen: chunk.length,
+        idx: i,
+        total: chunks.length,
+      },
+      responseType: "arraybuffer",
+      timeout: 60000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Referer": "https://translate.google.com/",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    buffers.push(Buffer.from(response.data));
+  }
+  return Buffer.concat(buffers);
 }
 
 async function sendMathSolution(chatId, options) {
@@ -319,7 +361,17 @@ async function sendMathSolution(chatId, options) {
     }
   } catch (error) {
     console.error("Voice error:", getOpenAiErrorMessage(error));
-    await bot.sendMessage(chatId, "Yozma yechim tayyor. Ovozli tushuntirishni yuborishda xatolik bo'ldi.");
+    if (!isOpenAiReady()) {
+      await bot.sendMessage(chatId, `Yozma yechim tayyor. Ovozli tushuntirish ishlamadi.\nSabab: ${getAiErrorForUser(error)}`);
+      return;
+    }
+    try {
+      const audio = await createFreeAudioExplanation(solution);
+      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.mp3", contentType: "audio/mpeg" });
+    } catch (retryError) {
+      console.error("Voice retry error:", getOpenAiErrorMessage(retryError));
+      await bot.sendMessage(chatId, `Yozma yechim tayyor. Ovozli tushuntirish ishlamadi.\nSabab: ${getAiErrorForUser(retryError)}`);
+    }
   }
 }
 
