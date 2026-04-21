@@ -102,7 +102,19 @@ function chunkText(text, maxLength = 3800) {
 
 function stripMarkdown(text) {
   return text
-    .replace(/[*_`#>\[\]()]/g, "")
+    .replace(/```[\s\S]*?```/g, (m) => m.replace(/```/g, ""))
+    .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
+    .replace(/\$([^$\n]+)\$/g, "$1")
+    .replace(/\\\(([^)]*)\\\)/g, "$1")
+    .replace(/\\\[([^\]]*)\\\]/g, "$1")
+    .replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, "($1)/($2)")
+    .replace(/\\sqrt\{([^}]*)\}/g, "ildiz($1)")
+    .replace(/\\cdot/g, "*")
+    .replace(/\\times/g, "*")
+    .replace(/\\[a-zA-Z]+\{?/g, "")
+    .replace(/[*_`#>]/g, "")
+    .replace(/\[(.+?)\]\((.+?)\)/g, "$1")
+    .replace(/[{}]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -185,7 +197,13 @@ async function askGeminiForMath({ text, imageBase64, mimeType }) {
 
   const prompt = `${text || "Rasmdagi matematika misolini o'qib yech."}
 
-Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib ol. Javobni o'zbek tilida ber. Avval misol shartini qisqa yoz, keyin bosqichma-bosqich yech, oxirida yakuniy javobni alohida ko'rsat. O'quvchiga tushunarli, sodda qilib tushuntir. Agar rasmda misol aniq ko'rinmasa, nima yetishmayotganini ayt.`;
+Quyidagi qoidalarga qat'iy amal qil:
+- Faqat oddiy matn yoz, hech qanday markdown belgilarini ishlatma (** _ # \` $ [ ] yo'q).
+- LaTeX formulalari yo'q. Daraja uchun ^ va ildiz uchun "ildiz()" yoki "sqrt()" yoz.
+- Javob o'zbek tilida bo'lsin.
+- Tartibi: 1) "Misol:" so'zi bilan misol shartini bir qator yoz. 2) "Yechish:" deb yozib, qadamlarni 1., 2., 3. tarzida raqamlab yoz. 3) "Javob:" deb oxirgi natijani yoz.
+- Qisqa va aniq yoz, keraksiz so'zlarsiz. Har bir qadam 1-2 qatordan oshmasin.
+- Agar rasmda misol aniq ko'rinmasa, nima ko'rinmayotganini bir qatorda yoz.`;
 
   const parts = [{ text: prompt }];
   if (imageBase64 && mimeType) {
@@ -203,8 +221,7 @@ Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib
       contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 8192,
-        thinkingConfig: { thinkingBudget: 0 },
+        maxOutputTokens: 4096,
       },
     },
     {
@@ -236,8 +253,14 @@ async function askAiForMath(options) {
     try {
       return await askGeminiForMath(options);
     } catch (error) {
+      console.error("Gemini math error:", getOpenAiErrorMessage(error));
       if (!isOpenAiReady()) throw error;
-      console.error("Gemini math error, trying OpenAI:", getOpenAiErrorMessage(error));
+      try {
+        return await askOpenAiForMath(options);
+      } catch (openaiError) {
+        console.error("OpenAI math fallback error:", getOpenAiErrorMessage(openaiError));
+        throw error;
+      }
     }
   }
   return askOpenAiForMath(options);
@@ -347,7 +370,8 @@ async function sendMathSolution(chatId, options) {
     }
     return;
   }
-  for (const part of chunkText(`🧮 Yechim:\n\n${solution}`)) {
+  const cleanSolution = stripMarkdown(solution);
+  for (const part of chunkText(`🧮 Yechim:\n\n${cleanSolution}`)) {
     await bot.sendMessage(chatId, part);
   }
 
