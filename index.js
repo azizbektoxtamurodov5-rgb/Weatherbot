@@ -203,13 +203,14 @@ Rasm bo'lsa avval undagi matn, chizma va berilgan qiymatlarni diqqat bilan o'qib
       contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 1800,
+        maxOutputTokens: 8192,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     },
     {
       params: { key: GEMINI_API_KEY },
       headers: { "Content-Type": "application/json" },
-      timeout: 90000,
+      timeout: 120000,
     }
   );
 
@@ -269,58 +270,57 @@ async function createVoiceExplanation(solution) {
   return Buffer.from(response.data);
 }
 
-function splitForTts(text, maxLen) {
-  const result = [];
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  let current = "";
-  for (const sentence of sentences) {
-    if (sentence.length > maxLen) {
-      if (current) { result.push(current); current = ""; }
-      for (let i = 0; i < sentence.length; i += maxLen) {
-        result.push(sentence.slice(i, i + maxLen));
-      }
-      continue;
-    }
-    if ((current + " " + sentence).trim().length > maxLen) {
-      if (current) result.push(current);
-      current = sentence;
-    } else {
-      current = (current ? current + " " : "") + sentence;
-    }
-  }
-  if (current) result.push(current);
-  return result.filter(Boolean);
+function pcmToWav(pcm, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const dataSize = pcm.length;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(channels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(byteRate, 28);
+  buffer.writeUInt16LE(blockAlign, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  pcm.copy(buffer, 44);
+  return buffer;
 }
 
-async function createFreeAudioExplanation(solution) {
-  const cleaned = stripMarkdown(solution).replace(/\s+/g, " ").trim();
-  const limited = cleaned.slice(0, 1400);
-  const chunks = splitForTts(limited, 180);
-  const buffers = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const response = await axios.get("https://translate.google.com/translate_tts", {
-      params: {
-        ie: "UTF-8",
-        client: "tw-ob",
-        tl: "uz",
-        q: chunk,
-        textlen: chunk.length,
-        idx: i,
-        total: chunks.length,
-      },
-      responseType: "arraybuffer",
-      timeout: 60000,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        "Referer": "https://translate.google.com/",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
-    buffers.push(Buffer.from(response.data));
+async function createGeminiAudioExplanation(solution) {
+  if (!isGeminiReady()) {
+    throw new Error("GEMINI_API_KEY kerak");
   }
-  return Buffer.concat(buffers);
+  const voiceText = stripMarkdown(solution).replace(/\s+/g, " ").trim().slice(0, 1500);
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`,
+    {
+      contents: [{ parts: [{ text: `O'qib ber: ${voiceText}` }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
+        },
+      },
+    },
+    {
+      params: { key: GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json" },
+      timeout: 120000,
+    }
+  );
+  const audioBase64 = response.data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
+    || response.data.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data;
+  if (!audioBase64) {
+    throw new Error("Gemini ovoz qaytarmadi.");
+  }
+  const pcm = Buffer.from(audioBase64, "base64");
+  return pcmToWav(pcm, 24000, 1, 16);
 }
 
 async function sendMathSolution(chatId, options) {
@@ -351,27 +351,30 @@ async function sendMathSolution(chatId, options) {
     await bot.sendMessage(chatId, part);
   }
 
-  try {
-    if (isOpenAiReady()) {
+  let voiceSent = false;
+  let lastVoiceError = null;
+  if (isGeminiReady()) {
+    try {
+      const audio = await createGeminiAudioExplanation(solution);
+      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.wav", contentType: "audio/wav" });
+      voiceSent = true;
+    } catch (error) {
+      lastVoiceError = error;
+      console.error("Gemini TTS error:", getOpenAiErrorMessage(error));
+    }
+  }
+  if (!voiceSent && isOpenAiReady()) {
+    try {
       const voice = await createVoiceExplanation(solution);
       await bot.sendVoice(chatId, voice, {}, { filename: "tushuntirish.ogg", contentType: "audio/ogg" });
-    } else {
-      const audio = await createFreeAudioExplanation(solution);
-      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.mp3", contentType: "audio/mpeg" });
+      voiceSent = true;
+    } catch (error) {
+      lastVoiceError = error;
+      console.error("OpenAI TTS error:", getOpenAiErrorMessage(error));
     }
-  } catch (error) {
-    console.error("Voice error:", getOpenAiErrorMessage(error));
-    if (!isOpenAiReady()) {
-      await bot.sendMessage(chatId, `Yozma yechim tayyor. Ovozli tushuntirish ishlamadi.\nSabab: ${getAiErrorForUser(error)}`);
-      return;
-    }
-    try {
-      const audio = await createFreeAudioExplanation(solution);
-      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.mp3", contentType: "audio/mpeg" });
-    } catch (retryError) {
-      console.error("Voice retry error:", getOpenAiErrorMessage(retryError));
-      await bot.sendMessage(chatId, `Yozma yechim tayyor. Ovozli tushuntirish ishlamadi.\nSabab: ${getAiErrorForUser(retryError)}`);
-    }
+  }
+  if (!voiceSent && lastVoiceError) {
+    await bot.sendMessage(chatId, `Yozma yechim tayyor. Ovozli tushuntirish ishlamadi.\nSabab: ${getAiErrorForUser(lastVoiceError)}`);
   }
 }
 
