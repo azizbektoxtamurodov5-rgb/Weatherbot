@@ -442,6 +442,67 @@ async function sendMathSolution(chatId, options) {
   }
 }
 
+// ===================== RASM YARATISH (Gemini Nano Banana) =====================
+
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+
+async function generateImageWithGemini(promptText) {
+  if (!isGeminiReady()) {
+    throw new Error("GEMINI_API_KEY kerak");
+  }
+  const enrichedPrompt = `Yuqori sifatli, aniq va chiroyli rasm yarat. Foydalanuvchi tasviri: ${promptText}`;
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+    {
+      contents: [{ parts: [{ text: enrichedPrompt }] }],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+      },
+    },
+    {
+      params: { key: GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json" },
+      timeout: 120000,
+    }
+  );
+
+  const candidate = response.data.candidates?.[0];
+  const blockReason = response.data.promptFeedback?.blockReason;
+  if (blockReason) {
+    throw new Error(`Rasm yaratish to'siq qo'yildi (${blockReason}). Boshqa tasvir bilan urinib ko'ring.`);
+  }
+  const imagePart = candidate?.content?.parts?.find(
+    (p) => p.inlineData?.data || p.inline_data?.data
+  );
+  const inline = imagePart?.inlineData || imagePart?.inline_data;
+  if (!inline?.data) {
+    const finishReason = candidate?.finishReason || "noma'lum";
+    throw new Error(`Rasm qaytmadi (${finishReason}). Tasvirni boshqacha qilib yozib ko'ring.`);
+  }
+  return {
+    buffer: Buffer.from(inline.data, "base64"),
+    mimeType: inline.mimeType || inline.mime_type || "image/png",
+  };
+}
+
+const pendingImagePrompt = new Set();
+
+async function handleImageGeneration(chatId, userId, promptText) {
+  if (!isGeminiReady()) {
+    await bot.sendMessage(chatId, "🎨 Rasm yaratish uchun GEMINI_API_KEY kerak.");
+    return;
+  }
+  await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting...");
+  try {
+    const { buffer, mimeType } = await generateImageWithGemini(promptText);
+    const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+    await bot.sendPhoto(chatId, buffer, { caption: `🎨 ${promptText.slice(0, 900)}` }, { filename: `rasm.${ext}`, contentType: mimeType });
+  } catch (error) {
+    console.error("Image gen error:", getOpenAiErrorMessage(error));
+    await bot.sendMessage(chatId, `❌ Rasm yaratishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}`);
+  }
+}
+
 async function downloadTelegramPhoto(fileId) {
   const fileUrl = await bot.getFileLink(fileId);
   const response = await axios.get(fileUrl, { responseType: "arraybuffer", timeout: 60000 });
@@ -607,7 +668,8 @@ const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "🌤️ Hozirgi ob-havo" }, { text: "📅 5 kunlik bashorat" }],
     [{ text: "🏙️ Viloyatlar ro'yxati" }, { text: "⭐ Jizzax / Zomin" }],
-    [{ text: "🧮 Matematik misol yechish" }, { text: "ℹ️ Yordam" }],
+    [{ text: "🧮 Matematik misol yechish" }, { text: "🎨 Rasm yaratish" }],
+    [{ text: "ℹ️ Yordam" }],
     [{ text: "🔔 Avtomatik bildirishnomalar" }, { text: "❌ Bildirishnomani o'chirish" }],
   ],
   resize_keyboard: true,
@@ -680,10 +742,24 @@ bot.onText(/\/start/, async (msg) => {
     `• 📅 5 kunlik bashorat\n` +
     `• 🧮 Matematika misolini rasm yoki matndan yechish\n` +
     `• 🔊 Yechimni ovozli tushuntirish\n` +
+    `• 🎨 Tasvirdan rasm yaratish (sun'iy intellekt)\n` +
     `• 🔔 Har kuni 08:00 ertalab va 21:00 kechqurun avtomatik xabar\n\n` +
     `Quyidagi tugmalardan foydalaning 👇`,
     { parse_mode: "HTML", reply_markup: MAIN_KEYBOARD }
   );
+});
+
+bot.onText(/\/rasm(?:\s+(.+))?/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from?.id || chatId;
+  if (!(await checkSubscription(chatId, userId))) return;
+  const promptText = match?.[1]?.trim();
+  if (!promptText) {
+    pendingImagePrompt.add(userId);
+    await bot.sendMessage(chatId, "🎨 Qanday rasm xohlaysiz? O'zbek tilida tasvirlab yozing.\nMasalan: /rasm Tog' tepasida quyosh chiqishi");
+    return;
+  }
+  await handleImageGeneration(chatId, userId, promptText);
 });
 
 bot.onText(/\/math(?:\s+(.+))?/i, async (msg, match) => {
@@ -751,6 +827,12 @@ bot.on("message", async (msg) => {
   if (text.startsWith("/")) return;
   if (!(await checkSubscription(chatId, userId))) return;
 
+  if (pendingImagePrompt.has(userId) && text && text !== "🎨 Rasm yaratish") {
+    pendingImagePrompt.delete(userId);
+    await handleImageGeneration(chatId, userId, text);
+    return;
+  }
+
   if (msg.photo?.length) {
     try {
       const largestPhoto = msg.photo[msg.photo.length - 1];
@@ -772,7 +854,11 @@ bot.on("message", async (msg) => {
   } else if (text === "⭐ Jizzax / Zomin") {
     await sendJizzaxZomin(chatId);
   } else if (text === "🧮 Matematik misol yechish") {
+    pendingImagePrompt.delete(userId);
     bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
+  } else if (text === "🎨 Rasm yaratish") {
+    pendingImagePrompt.add(userId);
+    bot.sendMessage(chatId, "🎨 Qanday rasm xohlaysiz? O'zbek tilida tasvirlab yozing.\nMasalan: \"Tog' tepasida quyosh chiqishi, oldida ko'l\" yoki \"Samarqand Registon kechqurun\".");
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
     bot.sendMessage(chatId,
