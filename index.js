@@ -27,6 +27,8 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
 });
 
 console.log("Bot ishga tushdi...");
+console.log(`Node Environment: ${process.env.NODE_ENV || "development"}`);
+console.log(`Bot polling o'rnatildi`);
 
 bot.on("polling_error", (error) => {
   const message = error.response?.body?.description || error.message;
@@ -444,45 +446,81 @@ async function sendMathSolution(chatId, options) {
 
 // ===================== RASM YARATISH (Pollinations - tekin) =====================
 
-async function generateImageWithPollinations(promptText) {
-  const seed = Math.floor(Math.random() * 1000000);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}`;
-  const response = await axios.get(url, {
-    params: {
-      width: 1024,
-      height: 1024,
-      nologo: "true",
-      enhance: "true",
-      seed,
-    },
-    responseType: "arraybuffer",
-    timeout: 120000,
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      "Accept": "image/*",
-    },
-  });
-  const contentType = response.headers["content-type"] || "image/jpeg";
-  if (!contentType.startsWith("image/")) {
-    throw new Error("Rasm o'rniga noto'g'ri javob keldi.");
+async function generateImageWithPollinations(promptText, retryCount = 0) {
+  if (!promptText || promptText.trim().length === 0) {
+    throw new Error("Tasvir bo'sh bo'lishi mumkin emas.");
   }
-  return {
-    buffer: Buffer.from(response.data),
-    mimeType: contentType,
-  };
+
+  const seed = Math.floor(Math.random() * 1000000);
+  const encodedPrompt = encodeURIComponent(promptText.slice(0, 300));
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
+  
+  try {
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 150000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "image/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://pollinations.ai",
+      },
+    });
+    
+    const contentType = response.headers["content-type"] || "image/jpeg";
+    if (!contentType.startsWith("image/")) {
+      throw new Error(`Noto'g'ri content-type: ${contentType}`);
+    }
+    
+    const buffer = Buffer.from(response.data);
+    if (buffer.length === 0 || buffer.length < 1000) {
+      throw new Error("Rasm hajmi juda kichik yoki bo'sh.");
+    }
+    
+    return {
+      buffer,
+      mimeType: contentType,
+    };
+  } catch (error) {
+    if (error.response?.status === 503 || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT") {
+      if (retryCount < 2) {
+        await sleep(2000 * (retryCount + 1));
+        return generateImageWithPollinations(promptText, retryCount + 1);
+      }
+      throw new Error(`Pollinations API mavjud emas yoki server banddir. ${retryCount} marta qayta urindi.`);
+    }
+    if (error.response?.status === 400) {
+      throw new Error("Tasvir noto'g'ri yoki juda uzun. O'zbek tilida qisqa tasvirlab yozing.");
+    }
+    throw error;
+  }
 }
 
 const pendingImagePrompt = new Set();
 
 async function handleImageGeneration(chatId, userId, promptText) {
-  await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting...");
+  promptText = promptText.trim();
+  if (!promptText) {
+    await bot.sendMessage(chatId, "❌ Tasvir bo'sh bo'lishi mumkin emas. O'zbek tilida qanday rasm xohlayotganingizni yozing.");
+    return;
+  }
+
+  await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting (30 soniyagacha)...");
+  
   try {
     const { buffer, mimeType } = await generateImageWithPollinations(promptText);
     const ext = mimeType.includes("png") ? "png" : "jpg";
-    await bot.sendPhoto(chatId, buffer, { caption: `🎨 ${promptText.slice(0, 900)}` }, { filename: `rasm.${ext}`, contentType: mimeType });
+    const caption = `🎨 ${promptText.slice(0, 900)}`;
+    
+    // Telegram API uchun to'g'ri format
+    await bot.sendPhoto(chatId, buffer, { caption }, { filename: `rasm.${ext}`, contentType: mimeType });
   } catch (error) {
-    console.error("Image gen error:", getOpenAiErrorMessage(error));
-    await bot.sendMessage(chatId, `❌ Rasm yaratishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}\n\nBoshqa tasvir bilan yoki biroz keyinroq qayta urinib ko'ring.`);
+    console.error("Image generation error:", error.message);
+    const userMessage = getAiErrorForUser(error);
+    await bot.sendMessage(
+      chatId, 
+      `❌ Rasm yaratishda xatolik bo'ldi.\n\nSabab: ${userMessage}\n\n💡 Almashtirish:\n• Rasmdagi Uzbek tilida yozing\n• Qisqa tasvir qilib ko'ring (5-20 so'z)\n• Boshqa tasvir bilan urinib ko'ring\n• Biroz keyinroq qayta yuboring`
+    );
   }
 }
 
@@ -739,7 +777,13 @@ bot.onText(/\/rasm(?:\s+(.+))?/i, async (msg, match) => {
   const promptText = match?.[1]?.trim();
   if (!promptText) {
     pendingImagePrompt.add(userId);
-    await bot.sendMessage(chatId, "🎨 Qanday rasm xohlaysiz? O'zbek tilida tasvirlab yozing.\nMasalan: /rasm Tog' tepasida quyosh chiqishi");
+    await bot.sendMessage(chatId, 
+      "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
+      "Misollar:\n" +
+      "• \"Tog' tepasida quyosh chiqishi\"\n" +
+      "• \"Samarqand Registon kechqurun\"\n" +
+      "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\""
+    );
     return;
   }
   await handleImageGeneration(chatId, userId, promptText);
@@ -841,7 +885,14 @@ bot.on("message", async (msg) => {
     bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
   } else if (text === "🎨 Rasm yaratish") {
     pendingImagePrompt.add(userId);
-    bot.sendMessage(chatId, "🎨 Qanday rasm xohlaysiz? O'zbek tilida tasvirlab yozing.\nMasalan: \"Tog' tepasida quyosh chiqishi, oldida ko'l\" yoki \"Samarqand Registon kechqurun\".");
+    bot.sendMessage(chatId, 
+      "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
+      "Misollar:\n" +
+      "• \"Tog' tepasida quyosh chiqishi\"\n" +
+      "• \"Samarqand Registon kechqurun\"\n" +
+      "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\"\n\n" +
+      "⏱️ Rasm yaratish 20-30 soniya vaqt olishi mumkin."
+    );
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
     bot.sendMessage(chatId,
