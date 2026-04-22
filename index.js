@@ -469,7 +469,11 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
     
     const contentType = response.headers["content-type"] || "image/jpeg";
     if (!contentType.startsWith("image/")) {
-      throw new Error(`Noto'g'ri content-type: ${contentType}`);
+      if (retryCount < 3) {
+        await sleep(3000 * (retryCount + 1));
+        return generateImageWithPollinations(promptText, retryCount + 1);
+      }
+      throw new Error("Pollinations server error. DALL-E 3 orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -477,26 +481,78 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
       throw new Error("Rasm hajmi juda kichik yoki bo'sh.");
     }
     
-    return {
-      buffer,
-      mimeType: contentType,
-    };
+    return { buffer, mimeType: contentType };
   } catch (error) {
-    if (error.response?.status === 503 || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT") {
-      if (retryCount < 2) {
-        await sleep(2000 * (retryCount + 1));
+    const msg = String(error.message).toLowerCase();
+    if (error.response?.status === 503 || error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT" || msg.includes("html")) {
+      if (retryCount < 3) {
+        await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error(`Pollinations API mavjud emas yoki server banddir. ${retryCount} marta qayta urindi.`);
+      throw new Error("Pollinations xizmat muammoli. DALL-E 3 orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
-      throw new Error("Tasvir noto'g'ri yoki juda uzun. O'zbek tilida qisqa tasvirlab yozing.");
+      throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
     }
     throw error;
   }
 }
 
-const pendingImagePrompt = new Set();
+async function generateImageWithDallE3(promptText) {
+  if (!isOpenAiReady()) {
+    throw new Error("OPENAI_API_KEY kerak");
+  }
+
+  const response = await axios.post(
+    `${OPENAI_BASE_URL}/images/generations`,
+    {
+      model: "dall-e-3",
+      prompt: promptText.slice(0, 1000),
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 60000,
+    }
+  );
+
+  const imageUrl = response.data.data?.[0]?.url;
+  if (!imageUrl) throw new Error("DALL-E 3 rasm URL qaytarmadi");
+
+  const imageResponse = await axios.get(imageUrl, {
+    responseType: "arraybuffer",
+    timeout: 30000,
+  });
+
+  return { buffer: Buffer.from(imageResponse.data), mimeType: "image/png" };
+}
+
+async function generateImage(promptText) {
+  let lastError;
+  try {
+    return await generateImageWithPollinations(promptText);
+  } catch (error) {
+    console.error("Pollinations error:", error.message);
+    lastError = error;
+  }
+
+  if (isOpenAiReady()) {
+    try {
+      console.log("DALL-E 3 orqali urinalmoqda...");
+      return await generateImageWithDallE3(promptText);
+    } catch (dalleError) {
+      console.error("DALL-E 3 error:", dalleError.message);
+      lastError = dalleError;
+    }
+  }
+
+  throw lastError || new Error("Rasm yaratish xizmatlar mavjud emas");
+}
 
 async function handleImageGeneration(chatId, userId, promptText) {
   promptText = promptText.trim();
@@ -508,7 +564,7 @@ async function handleImageGeneration(chatId, userId, promptText) {
   await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting (30 soniyagacha)...");
   
   try {
-    const { buffer, mimeType } = await generateImageWithPollinations(promptText);
+    const { buffer, mimeType } = await generateImage(promptText);
     const ext = mimeType.includes("png") ? "png" : "jpg";
     const caption = `🎨 ${promptText.slice(0, 900)}`;
     
