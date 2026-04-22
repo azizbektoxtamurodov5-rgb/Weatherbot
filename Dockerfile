@@ -9,7 +9,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 
 # Dependencies o'rnatish
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Qolgan kodlarni ko'chirish
 COPY . .
