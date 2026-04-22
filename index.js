@@ -442,64 +442,47 @@ async function sendMathSolution(chatId, options) {
   }
 }
 
-// ===================== RASM YARATISH (Gemini Nano Banana) =====================
+// ===================== RASM YARATISH (Pollinations - tekin) =====================
 
-const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
-
-async function generateImageWithGemini(promptText) {
-  if (!isGeminiReady()) {
-    throw new Error("GEMINI_API_KEY kerak");
-  }
-  const enrichedPrompt = `Yuqori sifatli, aniq va chiroyli rasm yarat. Foydalanuvchi tasviri: ${promptText}`;
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
-    {
-      contents: [{ parts: [{ text: enrichedPrompt }] }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-      },
+async function generateImageWithPollinations(promptText) {
+  const seed = Math.floor(Math.random() * 1000000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}`;
+  const response = await axios.get(url, {
+    params: {
+      width: 1024,
+      height: 1024,
+      nologo: "true",
+      enhance: "true",
+      seed,
     },
-    {
-      params: { key: GEMINI_API_KEY },
-      headers: { "Content-Type": "application/json" },
-      timeout: 120000,
-    }
-  );
-
-  const candidate = response.data.candidates?.[0];
-  const blockReason = response.data.promptFeedback?.blockReason;
-  if (blockReason) {
-    throw new Error(`Rasm yaratish to'siq qo'yildi (${blockReason}). Boshqa tasvir bilan urinib ko'ring.`);
-  }
-  const imagePart = candidate?.content?.parts?.find(
-    (p) => p.inlineData?.data || p.inline_data?.data
-  );
-  const inline = imagePart?.inlineData || imagePart?.inline_data;
-  if (!inline?.data) {
-    const finishReason = candidate?.finishReason || "noma'lum";
-    throw new Error(`Rasm qaytmadi (${finishReason}). Tasvirni boshqacha qilib yozib ko'ring.`);
+    responseType: "arraybuffer",
+    timeout: 120000,
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "image/*",
+    },
+  });
+  const contentType = response.headers["content-type"] || "image/jpeg";
+  if (!contentType.startsWith("image/")) {
+    throw new Error("Rasm o'rniga noto'g'ri javob keldi.");
   }
   return {
-    buffer: Buffer.from(inline.data, "base64"),
-    mimeType: inline.mimeType || inline.mime_type || "image/png",
+    buffer: Buffer.from(response.data),
+    mimeType: contentType,
   };
 }
 
 const pendingImagePrompt = new Set();
 
 async function handleImageGeneration(chatId, userId, promptText) {
-  if (!isGeminiReady()) {
-    await bot.sendMessage(chatId, "🎨 Rasm yaratish uchun GEMINI_API_KEY kerak.");
-    return;
-  }
   await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting...");
   try {
-    const { buffer, mimeType } = await generateImageWithGemini(promptText);
-    const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+    const { buffer, mimeType } = await generateImageWithPollinations(promptText);
+    const ext = mimeType.includes("png") ? "png" : "jpg";
     await bot.sendPhoto(chatId, buffer, { caption: `🎨 ${promptText.slice(0, 900)}` }, { filename: `rasm.${ext}`, contentType: mimeType });
   } catch (error) {
     console.error("Image gen error:", getOpenAiErrorMessage(error));
-    await bot.sendMessage(chatId, `❌ Rasm yaratishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}`);
+    await bot.sendMessage(chatId, `❌ Rasm yaratishda xatolik bo'ldi.\n\nSabab: ${getAiErrorForUser(error)}\n\nBoshqa tasvir bilan yoki biroz keyinroq qayta urinib ko'ring.`);
   }
 }
 
