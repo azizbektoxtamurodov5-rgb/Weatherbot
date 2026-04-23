@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. DeepAI orqali urinalmoqda...");
+      throw new Error("Pollinations server error. DeepAI yoki HuggingFace orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,7 +503,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. DeepAI orqali urinalmoqda...");
+      throw new Error("Pollinations xizmat muammoli. DeepAI yoki HuggingFace orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
@@ -544,36 +544,27 @@ async function generateImageWithDeepAI(promptText) {
   return { buffer: Buffer.from(imageResponse.data), mimeType: "image/png" };
 }
 
-async function generateImageWithGemini(promptText) {
-  if (!isGeminiReady()) {
-    throw new Error("GEMINI_API_KEY kerak");
+async function generateImageWithHuggingFace(promptText) {
+  const HF_API_KEY = process.env.HF_API_KEY;
+  if (!HF_API_KEY) {
+    throw new Error("HF_API_KEY kerak");
   }
 
   const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict`,
+    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
     {
-      instances: [
-        {
-          prompt: promptText,
-        },
-      ],
-      parameters: {
-        sampleCount: 1,
-      },
+      inputs: promptText,
     },
     {
-      params: { key: GEMINI_API_KEY },
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${HF_API_KEY}`,
+      },
+      responseType: "arraybuffer",
       timeout: 60000,
     }
   );
 
-  const imageData = response.data.predictions?.[0]?.bytesBase64Encoded;
-  if (!imageData) {
-    throw new Error("Gemini rasm yaratmadi");
-  }
-
-  return { buffer: Buffer.from(imageData, "base64"), mimeType: "image/png" };
+  return { buffer: Buffer.from(response.data), mimeType: "image/png" };
 }
 
 async function generateImageWithDallE3(promptText) {
@@ -627,6 +618,16 @@ async function generateImage(promptText) {
     } catch (deepaiError) {
       console.error("DeepAI error:", deepaiError.message);
       lastError = deepaiError;
+    }
+  }
+
+  if (process.env.HF_API_KEY) {
+    try {
+      console.log("HuggingFace orqali urinalmoqda...");
+      return await generateImageWithHuggingFace(promptText);
+    } catch (hfError) {
+      console.error("HuggingFace error:", hfError.message);
+      lastError = hfError;
     }
   }
 
