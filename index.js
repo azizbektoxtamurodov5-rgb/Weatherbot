@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. DALL-E 3 orqali urinalmoqda...");
+      throw new Error("Pollinations server error. Keyinroq qayta urinib ko'ring.");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,7 +503,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. DALL-E 3 orqali urinalmoqda...");
+      throw new Error("Pollinations xizmat muammoli. Keyinroq qayta urinib ko'ring.");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
