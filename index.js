@@ -53,19 +53,23 @@ async function isSubscribed(userId) {
 async function checkSubscription(chatId, userId) {
   const subscribed = await isSubscribed(userId);
   if (!subscribed) {
-    await bot.sendMessage(
-      chatId,
-      `❗️ Botdan foydalanish uchun avval kanalimizga a'zo bo'ling!\n\n` +
-      `👇 A'zo bo'lgach, /start bosing`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "📢 Kanalga a'zo bo'lish", url: "https://t.me/pythoncommands" }],
-            [{ text: "✅ A'zo bo'ldim", callback_data: "check_sub" }],
-          ],
-        },
-      }
-    );
+    try {
+      await bot.sendMessage(
+        chatId,
+        `❗️ Botdan foydalanish uchun avval kanalimizga a'zo bo'ling!\n\n` +
+        `👇 A'zo bo'lgach, /start bosing`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📢 Kanalga a'zo bo'lish", url: "https://t.me/pythoncommands" }],
+              [{ text: "✅ A'zo bo'ldim", callback_data: "check_sub" }],
+            ],
+          },
+        }
+      );
+    } catch (error) {
+      console.error('[checkSubscription] Send message error:', error.message);
+    }
     return false;
   }
   return true;
@@ -932,7 +936,12 @@ bot.on("message", async (msg) => {
 
   console.log('[message handler] Incoming text:', text, 'user:', userId);
   if (text.startsWith("/")) return;
-  if (!(await checkSubscription(chatId, userId))) return;
+  try {
+    if (!(await checkSubscription(chatId, userId))) return;
+  } catch (error) {
+    console.error('[message handler] Subscription check error:', error.message);
+    return;
+  }
 
   if (pendingImagePrompt.has(userId) && text && !isImageCommand) {
     try {
