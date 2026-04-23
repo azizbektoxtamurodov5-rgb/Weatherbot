@@ -552,8 +552,13 @@ async function generateImageWithGemini(promptText) {
   const response = await axios.post(
     `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict`,
     {
-      prompt: {
-        text: promptText,
+      instances: [
+        {
+          prompt: promptText,
+        },
+      ],
+      parameters: {
+        sampleCount: 1,
       },
     },
     {
