@@ -422,7 +422,11 @@ async function sendMathSolution(chatId, options) {
   if (isGeminiReady()) {
     try {
       const audio = await createGeminiAudioExplanation(solution);
-      await bot.sendAudio(chatId, audio, { caption: "🔊 Ovozli tushuntirish" }, { filename: "tushuntirish.wav", contentType: "audio/wav" });
+      await bot.sendAudio(chatId, audio, {
+        caption: "🔊 Ovozli tushuntirish",
+        filename: "tushuntirish.wav",
+        contentType: "audio/wav",
+      });
       voiceSent = true;
     } catch (error) {
       lastVoiceError = error;
@@ -432,7 +436,10 @@ async function sendMathSolution(chatId, options) {
   if (!voiceSent && isOpenAiReady()) {
     try {
       const voice = await createVoiceExplanation(solution);
-      await bot.sendVoice(chatId, voice, {}, { filename: "tushuntirish.ogg", contentType: "audio/ogg" });
+      await bot.sendVoice(chatId, voice, {
+        filename: "tushuntirish.ogg",
+        contentType: "audio/ogg",
+      });
       voiceSent = true;
     } catch (error) {
       lastVoiceError = error;
@@ -447,6 +454,7 @@ async function sendMathSolution(chatId, options) {
 // ===================== RASM YARATISH (Pollinations - tekin) =====================
 
 async function generateImageWithPollinations(promptText, retryCount = 0) {
+  console.log('[generateImageWithPollinations] Start with retry:', retryCount);
   if (!promptText || promptText.trim().length === 0) {
     throw new Error("Tasvir bo'sh bo'lishi mumkin emas.");
   }
@@ -533,6 +541,7 @@ async function generateImageWithDallE3(promptText) {
 }
 
 async function generateImage(promptText) {
+  console.log('[generateImage] Start');
   let lastError;
   try {
     return await generateImageWithPollinations(promptText);
@@ -551,25 +560,34 @@ async function generateImage(promptText) {
     }
   }
 
+  console.error('[generateImage] All attempts failed:', lastError?.message);
   throw lastError || new Error("Rasm yaratish xizmatlar mavjud emas");
 }
 
 async function handleImageGeneration(chatId, userId, promptText) {
-  promptText = promptText.trim();
-  if (!promptText) {
-    await bot.sendMessage(chatId, "❌ Tasvir bo'sh bo'lishi mumkin emas. O'zbek tilida qanday rasm xohlayotganingizni yozing.");
-    return;
-  }
-
-  await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting (30 soniyagacha)...");
-  
   try {
+    console.log('[handleImageGeneration] Start for:', promptText.slice(0, 50));
+    promptText = promptText.trim();
+    if (!promptText) {
+      await bot.sendMessage(chatId, "❌ Tasvir bo'sh bo'lishi mumkin emas. O'zbek tilida qanday rasm xohlayotganingizni yozing.");
+      return;
+    }
+
+    console.log('[handleImageGeneration] Sending waiting message...');
+    await bot.sendMessage(chatId, "🎨 Rasm yaratyapman, biroz kuting (30 soniyagacha)...");
+    
+    console.log('[handleImageGeneration] Calling generateImage...');
     const { buffer, mimeType } = await generateImage(promptText);
+    console.log('[handleImageGeneration] Got image, buffer size:', buffer.length);
     const ext = mimeType.includes("png") ? "png" : "jpg";
     const caption = `🎨 ${promptText.slice(0, 900)}`;
     
     // Telegram API uchun to'g'ri format
-    await bot.sendPhoto(chatId, buffer, { caption }, { filename: `rasm.${ext}`, contentType: mimeType });
+    await bot.sendPhoto(chatId, buffer, {
+      caption,
+      filename: `rasm.${ext}`,
+      contentType: mimeType,
+    });
   } catch (error) {
     console.error("Image generation error:", error.message);
     const userMessage = getAiErrorForUser(error);
@@ -906,13 +924,23 @@ bot.onText(/\/unsubscribe/, (msg) => {
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
-  const text = msg.text || msg.caption || "";
+  const rawText = msg.text || msg.caption || "";
+  const text = rawText.trim();
+  const isImageCommand = /rasm yaratish/i.test(text);
+
+  console.log('[message handler] Incoming text:', text, 'user:', userId);
   if (text.startsWith("/")) return;
   if (!(await checkSubscription(chatId, userId))) return;
 
-  if (pendingImagePrompt.has(userId) && text && text !== "🎨 Rasm yaratish") {
-    pendingImagePrompt.delete(userId);
-    await handleImageGeneration(chatId, userId, text);
+  if (pendingImagePrompt.has(userId) && text && !isImageCommand) {
+    try {
+      console.log('[message handler] Image prompt detected:', text.slice(0, 50));
+      pendingImagePrompt.delete(userId);
+      await handleImageGeneration(chatId, userId, text);
+    } catch (error) {
+      console.error('[message handler] Image generation error:', error);
+      await bot.sendMessage(chatId, "❌ Rasm yaratishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.");
+    }
     return;
   }
 
@@ -925,6 +953,19 @@ bot.on("message", async (msg) => {
       console.error("Photo math error:", error.response?.data || error.message);
       await bot.sendMessage(chatId, "❌ Rasmni o'qish yoki misolni yechishda xatolik bo'ldi. Rasm tiniqroq bo'lsa, qayta yuboring.");
     }
+    return;
+  }
+
+  if (isImageCommand) {
+    pendingImagePrompt.add(userId);
+    await bot.sendMessage(chatId,
+      "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
+      "Misollar:\n" +
+      "• \"Tog' tepasida quyosh chiqishi\"\n" +
+      "• \"Samarqand Registon kechqurun\"\n" +
+      "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\"\n\n" +
+      "⏱️ Rasm yaratish 20-30 soniya vaqt olishi mumkin."
+    );
     return;
   }
 
