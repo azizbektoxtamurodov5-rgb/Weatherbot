@@ -467,7 +467,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
 
   const seed = Math.floor(Math.random() * 1000000);
   const encodedPrompt = encodeURIComponent(promptText.slice(0, 300));
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true&enhance=true&seed=${seed}`;
   
   try {
     const response = await axios.get(url, {
@@ -556,15 +556,16 @@ async function generateImage(promptText) {
     lastError = error;
   }
 
-  if (isOpenAiReady()) {
-    try {
-      console.log("DALL-E 3 orqali urinalmoqda...");
-      return await generateImageWithDallE3(promptText);
-    } catch (dalleError) {
-      console.error("DALL-E 3 error:", dalleError.message);
-      lastError = dalleError;
-    }
-  }
+  // Temporarily disabled DALL-E due to billing limits
+  // if (isOpenAiReady()) {
+  //   try {
+  //     console.log("DALL-E 3 orqali urinalmoqda...");
+  //     return await generateImageWithDallE3(promptText);
+  //   } catch (dalleError) {
+  //     console.error("DALL-E 3 error:", dalleError.message);
+  //     lastError = dalleError;
+  //   }
+  // }
 
   console.error('[generateImage] All attempts failed:', lastError?.message);
   throw lastError || new Error("Rasm yaratish xizmatlar mavjud emas");
