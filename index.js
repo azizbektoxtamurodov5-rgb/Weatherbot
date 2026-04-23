@@ -853,7 +853,7 @@ bot.onText(/\/start/, async (msg) => {
 bot.onText(/\/rasm(?:\s+(.+))?/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
-  if (!(await checkSubscription(chatId, userId))) return;
+  // if (!(await checkSubscription(chatId, userId))) return;
   const promptText = match?.[1]?.trim();
   if (!promptText) {
     pendingImagePrompt.add(userId);
@@ -872,7 +872,7 @@ bot.onText(/\/rasm(?:\s+(.+))?/i, async (msg, match) => {
 bot.onText(/\/math(?:\s+(.+))?/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id || chatId;
-  if (!(await checkSubscription(chatId, userId))) return;
+  // if (!(await checkSubscription(chatId, userId))) return;
   const problem = match?.[1]?.trim();
   if (!problem) {
     await bot.sendMessage(chatId, "🧮 Misolni /math dan keyin yozing yoki rasm qilib yuboring.\nMasalan: /math 2x + 5 = 13");
@@ -936,12 +936,13 @@ bot.on("message", async (msg) => {
 
   console.log('[message handler] Incoming text:', text, 'user:', userId);
   if (text.startsWith("/")) return;
-  try {
-    if (!(await checkSubscription(chatId, userId))) return;
-  } catch (error) {
-    console.error('[message handler] Subscription check error:', error.message);
-    return;
-  }
+  // Temporarily disabled subscription check
+  // try {
+  //   if (!(await checkSubscription(chatId, userId))) return;
+  // } catch (error) {
+  //   console.error('[message handler] Subscription check error:', error.message);
+  //   return;
+  // }
 
   if (pendingImagePrompt.has(userId) && text && !isImageCommand) {
     try {
