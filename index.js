@@ -856,7 +856,7 @@ const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "🌤️ Hozirgi ob-havo" }, { text: "📅 5 kunlik bashorat" }],
     [{ text: "🏙️ Viloyatlar ro'yxati" }, { text: "⭐ Jizzax / Zomin" }],
-    [{ text: "🧮 Matematik misol yechish" }, { text: "🎨 Rasm yaratish" }],
+    [{ text: "🧮 Matematik misol yechish" }],
     [{ text: "ℹ️ Yordam" }],
     [{ text: "🔔 Avtomatik bildirishnomalar" }, { text: "❌ Bildirishnomani o'chirish" }],
   ],
@@ -1084,21 +1084,6 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
     } catch (error) {
       console.error('[message handler] Send math message error:', error.message);
-    }
-  } else if (text === "🎨 Rasm yaratish") {
-    console.log('[message handler] Image button pressed');
-    pendingImagePrompt.add(userId);
-    try {
-      await bot.sendMessage(chatId, 
-        "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
-        "Misollar:\n" +
-        "• \"Tog' tepasida quyosh chiqishi\"\n" +
-        "• \"Samarqand Registon kechqurun\"\n" +
-        "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\"\n\n" +
-        "⏱️ Rasm yaratish 20-30 soniya vaqt olishi mumkin."
-      );
-    } catch (error) {
-      console.error('[message handler] Send image message error:', error.message);
     }
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
