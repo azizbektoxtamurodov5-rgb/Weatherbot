@@ -820,6 +820,7 @@ console.log("Scheduler ishga tushdi (08:00 va 21:00 Toshkent vaqti)");
 // ===================== USER STATE =====================
 
 const userCity = new Map();
+const pendingImagePrompt = new Set();
 
 function getUserQuery(userId) { return userCity.get(userId) || DEFAULT_CITY.query; }
 function getUserLabel(userId) {
