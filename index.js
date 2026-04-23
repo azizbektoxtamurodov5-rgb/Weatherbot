@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. DALL-E 3 orqali urinalmoqda...");
+      throw new Error("Pollinations server error. DeepAI orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,13 +503,45 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. DALL-E 3 orqali urinalmoqda...");
+      throw new Error("Pollinations xizmat muammoli. DeepAI orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
     }
     throw error;
   }
+}
+
+async function generateImageWithDeepAI(promptText) {
+  const DEEPAI_API_KEY = process.env.DEEPAI_API_KEY;
+  if (!DEEPAI_API_KEY) {
+    throw new Error("DEEPAI_API_KEY kerak");
+  }
+
+  const response = await axios.post(
+    "https://api.deepai.org/api/text2img",
+    {
+      text: promptText,
+    },
+    {
+      headers: {
+        "Api-Key": DEEPAI_API_KEY,
+      },
+      timeout: 60000,
+    }
+  );
+
+  const imageUrl = response.data.output_url;
+  if (!imageUrl) {
+    throw new Error("DeepAI rasm yaratmadi");
+  }
+
+  const imageResponse = await axios.get(imageUrl, {
+    responseType: "arraybuffer",
+    timeout: 30000,
+  });
+
+  return { buffer: Buffer.from(imageResponse.data), mimeType: "image/png" };
 }
 
 async function generateImageWithDallE3(promptText) {
@@ -554,6 +586,16 @@ async function generateImage(promptText) {
   } catch (error) {
     console.error("Pollinations error:", error.message);
     lastError = error;
+  }
+
+  if (process.env.DEEPAI_API_KEY) {
+    try {
+      console.log("DeepAI orqali urinalmoqda...");
+      return await generateImageWithDeepAI(promptText);
+    } catch (deepaiError) {
+      console.error("DeepAI error:", deepaiError.message);
+      lastError = deepaiError;
+    }
   }
 
   if (isOpenAiReady()) {
