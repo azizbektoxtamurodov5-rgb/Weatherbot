@@ -467,7 +467,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
 
   const seed = Math.floor(Math.random() * 1000000);
   const encodedPrompt = encodeURIComponent(promptText.slice(0, 300));
-  const url = `https://enter.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true&enhance=true&seed=${seed}`;
+  const url = `https://enter.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
   
   try {
     const response = await axios.get(url, {
