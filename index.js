@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. Keyinroq qayta urinib ko'ring.");
+      throw new Error("Pollinations server error. DALL-E 3 orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,7 +503,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. Keyinroq qayta urinib ko'ring.");
+      throw new Error("Pollinations xizmat muammoli. DALL-E 3 orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
@@ -556,16 +556,15 @@ async function generateImage(promptText) {
     lastError = error;
   }
 
-  // Temporarily disabled DALL-E due to billing limits
-  // if (isOpenAiReady()) {
-  //   try {
-  //     console.log("DALL-E 3 orqali urinalmoqda...");
-  //     return await generateImageWithDallE3(promptText);
-  //   } catch (dalleError) {
-  //     console.error("DALL-E 3 error:", dalleError.message);
-  //     lastError = dalleError;
-  //   }
-  // }
+  if (isOpenAiReady()) {
+    try {
+      console.log("DALL-E 3 orqali urinalmoqda...");
+      return await generateImageWithDallE3(promptText);
+    } catch (dalleError) {
+      console.error("DALL-E 3 error:", dalleError.message);
+      lastError = dalleError;
+    }
+  }
 
   console.error('[generateImage] All attempts failed:', lastError?.message);
   throw lastError || new Error("Rasm yaratish xizmatlar mavjud emas");
