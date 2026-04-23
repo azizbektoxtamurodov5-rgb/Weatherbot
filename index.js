@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. DeepAI orqali urinalmoqda...");
+      throw new Error("Pollinations server error. DeepAI yoki Gemini orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,7 +503,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. DeepAI orqali urinalmoqda...");
+      throw new Error("Pollinations xizmat muammoli. DeepAI yoki Gemini orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
@@ -542,6 +542,33 @@ async function generateImageWithDeepAI(promptText) {
   });
 
   return { buffer: Buffer.from(imageResponse.data), mimeType: "image/png" };
+}
+
+async function generateImageWithGemini(promptText) {
+  if (!isGeminiReady()) {
+    throw new Error("GEMINI_API_KEY kerak");
+  }
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict`,
+    {
+      prompt: {
+        text: promptText,
+      },
+    },
+    {
+      params: { key: GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json" },
+      timeout: 60000,
+    }
+  );
+
+  const imageData = response.data.predictions?.[0]?.bytesBase64Encoded;
+  if (!imageData) {
+    throw new Error("Gemini rasm yaratmadi");
+  }
+
+  return { buffer: Buffer.from(imageData, "base64"), mimeType: "image/png" };
 }
 
 async function generateImageWithDallE3(promptText) {
@@ -595,6 +622,16 @@ async function generateImage(promptText) {
     } catch (deepaiError) {
       console.error("DeepAI error:", deepaiError.message);
       lastError = deepaiError;
+    }
+  }
+
+  if (isGeminiReady()) {
+    try {
+      console.log("Gemini Imagen orqali urinalmoqda...");
+      return await generateImageWithGemini(promptText);
+    } catch (geminiError) {
+      console.error("Gemini Imagen error:", geminiError.message);
+      lastError = geminiError;
     }
   }
 
