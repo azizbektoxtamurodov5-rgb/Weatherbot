@@ -598,15 +598,16 @@ async function generateImage(promptText) {
     }
   }
 
-  if (isOpenAiReady()) {
-    try {
-      console.log("DALL-E 3 orqali urinalmoqda...");
-      return await generateImageWithDallE3(promptText);
-    } catch (dalleError) {
-      console.error("DALL-E 3 error:", dalleError.message);
-      lastError = dalleError;
-    }
-  }
+  // DALL-E disabled for free version
+  // if (isOpenAiReady()) {
+  //   try {
+  //     console.log("DALL-E 3 orqali urinalmoqda...");
+  //     return await generateImageWithDallE3(promptText);
+  //   } catch (dalleError) {
+  //     console.error("DALL-E 3 error:", dalleError.message);
+  //     lastError = dalleError;
+  //   }
+  // }
 
   console.error('[generateImage] All attempts failed:', lastError?.message);
   throw lastError || new Error("Rasm yaratish xizmatlar mavjud emas");
