@@ -990,18 +990,28 @@ bot.on("message", async (msg) => {
   } else if (text === "⭐ Jizzax / Zomin") {
     await sendJizzaxZomin(chatId);
   } else if (text === "🧮 Matematik misol yechish") {
+    console.log('[message handler] Math button pressed');
     pendingImagePrompt.delete(userId);
-    bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
+    try {
+      await bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
+    } catch (error) {
+      console.error('[message handler] Send math message error:', error.message);
+    }
   } else if (text === "🎨 Rasm yaratish") {
+    console.log('[message handler] Image button pressed');
     pendingImagePrompt.add(userId);
-    bot.sendMessage(chatId, 
-      "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
-      "Misollar:\n" +
-      "• \"Tog' tepasida quyosh chiqishi\"\n" +
-      "• \"Samarqand Registon kechqurun\"\n" +
-      "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\"\n\n" +
-      "⏱️ Rasm yaratish 20-30 soniya vaqt olishi mumkin."
-    );
+    try {
+      await bot.sendMessage(chatId, 
+        "🎨 Qanday rasm xohlaysiz? O'zbek tilida qisqa tasvirlab yozing.\n\n" +
+        "Misollar:\n" +
+        "• \"Tog' tepasida quyosh chiqishi\"\n" +
+        "• \"Samarqand Registon kechqurun\"\n" +
+        "• \"O'zbek milliy oshpazi tayyor qilayotgan plov\"\n\n" +
+        "⏱️ Rasm yaratish 20-30 soniya vaqt olishi mumkin."
+      );
+    } catch (error) {
+      console.error('[message handler] Send image message error:', error.message);
+    }
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
     bot.sendMessage(chatId,
