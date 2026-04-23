@@ -487,7 +487,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations server error. DeepAI yoki Gemini orqali urinalmoqda...");
+      throw new Error("Pollinations server error. DeepAI orqali urinalmoqda...");
     }
     
     const buffer = Buffer.from(response.data);
@@ -503,7 +503,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
         await sleep(3000 * (retryCount + 1));
         return generateImageWithPollinations(promptText, retryCount + 1);
       }
-      throw new Error("Pollinations xizmat muammoli. DeepAI yoki Gemini orqali urinalmoqda...");
+      throw new Error("Pollinations xizmat muammoli. DeepAI orqali urinalmoqda...");
     }
     if (error.response?.status === 400) {
       throw new Error("Tasvir noto'g'ri. O'zbek tilida qisqa tasvirlab yozing.");
@@ -630,15 +630,16 @@ async function generateImage(promptText) {
     }
   }
 
-  if (isGeminiReady()) {
-    try {
-      console.log("Gemini Imagen orqali urinalmoqda...");
-      return await generateImageWithGemini(promptText);
-    } catch (geminiError) {
-      console.error("Gemini Imagen error:", geminiError.message);
-      lastError = geminiError;
-    }
-  }
+  // Gemini Imagen not free
+  // if (isGeminiReady()) {
+  //   try {
+  //     console.log("Gemini Imagen orqali urinalmoqda...");
+  //     return await generateImageWithGemini(promptText);
+  //   } catch (geminiError) {
+  //     console.error("Gemini Imagen error:", geminiError.message);
+  //     lastError = geminiError;
+  //   }
+  // }
 
   // DALL-E disabled for free version
   // if (isOpenAiReady()) {
