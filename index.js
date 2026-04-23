@@ -10,7 +10,7 @@ const WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-4o";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
@@ -42,8 +42,10 @@ const REQUIRED_CHANNEL = "@pythoncommands";
 async function isSubscribed(userId) {
   try {
     const member = await bot.getChatMember(REQUIRED_CHANNEL, userId);
+    console.log(`[isSubscribed] User ${userId} status: ${member.status}`);
     return ["member", "administrator", "creator"].includes(member.status);
-  } catch {
+  } catch (error) {
+    console.error(`[isSubscribed] Error for user ${userId}:`, error.message);
     return false;
   }
 }
@@ -461,7 +463,7 @@ async function generateImageWithPollinations(promptText, retryCount = 0) {
 
   const seed = Math.floor(Math.random() * 1000000);
   const encodedPrompt = encodeURIComponent(promptText.slice(0, 300));
-  const url = `https://enter.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&enhance=true&seed=${seed}`;
   
   try {
     const response = await axios.get(url, {
