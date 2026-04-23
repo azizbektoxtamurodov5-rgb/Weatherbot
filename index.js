@@ -551,7 +551,7 @@ async function generateImageWithHuggingFace(promptText) {
   }
 
   const response = await axios.post(
-    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
     {
       inputs: promptText,
     },
