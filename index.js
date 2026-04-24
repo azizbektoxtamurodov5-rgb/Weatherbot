@@ -1,6 +1,7 @@
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const cron = require("node-cron");
+const express = require("express");
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "cfb18895da0d8bf04a8307cc8550fe0d";
@@ -11,6 +12,10 @@ const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-4o";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+
+const app = express();
+app.use(express.json({ limit: "3mb" }));
+const PORT = process.env.PORT || 3000;
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
@@ -702,6 +707,177 @@ async function downloadTelegramPhoto(fileId) {
   };
 }
 
+function isVideoServiceReady() {
+  return Boolean(process.env.VIDEO_API_URL && process.env.VIDEO_API_KEY);
+}
+
+function buildFallbackVideoPrompt(userText) {
+  return `Create a short cinematic video scene based on this Uzbek description: "${userText.trim()}". The spoken dialogue in the video must be in Uzbek. Write the prompt in clear English only, without markdown, subtitles, or extra formatting. Keep the instruction concise and suitable for a video generation service.`;
+}
+
+async function askGeminiForVideoPrompt(userText) {
+  if (!isGeminiReady()) {
+    throw new Error("GEMINI_API_KEY kerak video prompt uchun");
+  }
+
+  const prompt = `${userText}
+
+Siz video promptini yozadigan mutaxassissiz. Quyidagilarni bajaring:
+- Ingliz tilida qisqa, aniq va aynan video generator uchun prompt yozing.
+- Videodagi gaplar va dialoglar 100% o'zbek tilida bo'lishi kerak.
+- Hech qanday markdown belgilarini, kod bloklarini yoki formatlashni ishlatmang.
+- Javob faqat oddiy inglizcha matn bo'lsin.`;
+
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.5,
+      maxOutputTokens: 800,
+    },
+  };
+
+  const response = await callGeminiOnce(GEMINI_MODEL, body);
+  const candidate = response.data.candidates?.[0];
+  const partsText = candidate?.content?.parts?.map((part) => part.text || "").join("").trim();
+  if (!partsText) {
+    throw new Error("Gemini video prompt yaratishda bo'sh javob qaytardi.");
+  }
+  return partsText;
+}
+
+async function askOpenAiForVideoPrompt(userText) {
+  if (!isOpenAiReady()) {
+    throw new Error("OPENAI_API_KEY kerak video prompt uchun");
+  }
+
+  const prompt = `${userText}\n\nYou are an expert video prompt writer. Convert the description above into a clear English prompt for a video generation service. The spoken dialogue in the generated video should still be in Uzbek. Output only plain English text without markdown or extra formatting.`;
+
+  const response = await axios.post(
+    `${OPENAI_BASE_URL}/chat/completions`,
+    {
+      model: OPENAI_TEXT_MODEL,
+      temperature: 0.5,
+      max_tokens: 800,
+      messages: [
+        { role: "system", content: "You are an expert video prompt engineer." },
+        { role: "user", content: prompt },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 90000,
+    }
+  );
+
+  return response.data.choices?.[0]?.message?.content?.trim() || "";
+}
+
+async function createEnglishVideoPrompt(userText) {
+  const normalized = userText.trim();
+  if (!normalized) throw new Error("Video matni bo'sh bo'lishi mumkin emas.");
+
+  if (isGeminiReady()) {
+    try {
+      return await askGeminiForVideoPrompt(normalized);
+    } catch (error) {
+      console.error("Gemini video prompt error:", getOpenAiErrorMessage(error));
+    }
+  }
+
+  if (isOpenAiReady()) {
+    try {
+      return await askOpenAiForVideoPrompt(normalized);
+    } catch (error) {
+      console.error("OpenAI video prompt error:", getOpenAiErrorMessage(error));
+    }
+  }
+
+  return buildFallbackVideoPrompt(normalized);
+}
+
+async function createVideoFromService(englishPrompt, originalText) {
+  const url = process.env.VIDEO_API_URL;
+  if (!url) throw new Error("VIDEO_API_URL sozlanmagan.");
+
+  const key = process.env.VIDEO_API_KEY;
+  const keyHeader = process.env.VIDEO_API_KEY_HEADER || "Authorization";
+  const headers = {};
+  if (key) {
+    headers[keyHeader] = keyHeader.toLowerCase() === "authorization" ? `Bearer ${key}` : key;
+  }
+
+  let extraPayload = {};
+  if (process.env.VIDEO_API_EXTRA) {
+    try {
+      extraPayload = JSON.parse(process.env.VIDEO_API_EXTRA);
+    } catch (error) {
+      console.error("VIDEO_API_EXTRA JSON parsing error:", error.message);
+    }
+  }
+
+  const payload = {
+    prompt: englishPrompt,
+    original_text: originalText,
+    speech_language: "uz",
+    tts_language: "uz",
+    output_format: "mp4",
+    ...extraPayload,
+  };
+
+  const response = await axios.post(url, payload, {
+    headers: {
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    timeout: 180000,
+  });
+
+  const data = response.data;
+  if (typeof data === "string" && data.startsWith("http")) {
+    return { videoUrl: data };
+  }
+  if (data.video_url) return { videoUrl: data.video_url };
+  if (data.url) return { videoUrl: data.url };
+  if (data.video?.url) return { videoUrl: data.video.url };
+  if (data.video_base64) return { videoBuffer: Buffer.from(data.video_base64, "base64") };
+  if (data.base64) return { videoBuffer: Buffer.from(data.base64, "base64") };
+  if (data.output && typeof data.output === "string" && data.output.startsWith("http")) {
+    return { videoUrl: data.output };
+  }
+
+  throw new Error("Video API javobidan video topilmadi.");
+}
+
+async function handleVideoCreation(chatId, userText) {
+  try {
+    await bot.sendMessage(chatId, "🎬 Video yaratilyapti... Iltimos, bir necha daqiqa kuting.");
+    const englishPrompt = await createEnglishVideoPrompt(userText);
+    const videoResult = await createVideoFromService(englishPrompt, userText);
+
+    if (videoResult.videoUrl) {
+      await bot.sendMessage(chatId, `✅ Video tayyor: ${videoResult.videoUrl}`);
+    } else if (videoResult.videoBuffer) {
+      await bot.sendVideo(chatId, videoResult.videoBuffer, {
+        caption: "🎬 Sizning video tayyor.",
+        filename: "video.mp4",
+        contentType: "video/mp4",
+      });
+    } else {
+      throw new Error("Video natijasi topilmadi.");
+    }
+  } catch (error) {
+    console.error("Video creation error:", getOpenAiErrorMessage(error));
+    await bot.sendMessage(chatId,
+      `❌ Video yaratishda xatolik bo'ldi.
+Sabab: ${getAiErrorForUser(error)}\n\n` +
+      `Kerakli sozlamalarni tekshiring: VIDEO_API_URL, VIDEO_API_KEY, VIDEO_API_KEY_HEADER.`
+    );
+  }
+}
+
 // ===================== WEATHER =====================
 
 function getWeatherEmoji(icon) {
@@ -857,6 +1033,7 @@ const MAIN_KEYBOARD = {
     [{ text: "🌤️ Hozirgi ob-havo" }, { text: "📅 5 kunlik bashorat" }],
     [{ text: "🏙️ Viloyatlar ro'yxati" }, { text: "⭐ Jizzax / Zomin" }],
     [{ text: "🧮 Matematik misol yechish" }, { text: "🎨 Rasm yaratish" }],
+    [{ text: "🎥 Video yaratish" }],
     [{ text: "ℹ️ Yordam" }],
     [{ text: "🔔 Avtomatik bildirishnomalar" }, { text: "❌ Bildirishnomani o'chirish" }],
   ],
@@ -908,6 +1085,7 @@ console.log("Scheduler ishga tushdi (08:00 va 21:00 Toshkent vaqti)");
 
 const userCity = new Map();
 const pendingImagePrompt = new Set();
+const pendingVideoPrompt = new Set();
 
 function getUserQuery(userId) { return userCity.get(userId) || DEFAULT_CITY.query; }
 function getUserLabel(userId) {
@@ -974,6 +1152,22 @@ bot.onText(/\/math(?:\s+(.+))?/i, async (msg, match) => {
   }
 });
 
+bot.onText(/\/video(?:\s+(.+))?/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from?.id || chatId;
+  const requestText = match?.[1]?.trim();
+  if (!requestText) {
+    pendingVideoPrompt.add(userId);
+    await bot.sendMessage(chatId,
+      "🎥 Qanday video kerak? Iltimos, o'zbek tilida qisqacha tavsif yozing.\n" +
+      "Misol: 'Bola ko'chada yoshi kattaroq insonga salom berdi' yoki 'Qiz parkda piyoda yurmoqda'."
+    );
+    return;
+  }
+
+  await handleVideoCreation(chatId, requestText);
+});
+
 bot.onText(/\/jizzax/, async (msg) => {
   await sendCityWeather(msg.chat.id, "Jizzax,UZ", "🌄 Jizzax viloyati");
 });
@@ -1032,6 +1226,17 @@ bot.on("message", async (msg) => {
   //   return;
   // }
 
+  if (pendingVideoPrompt.has(userId) && text && !isImageCommand) {
+    try {
+      pendingVideoPrompt.delete(userId);
+      await handleVideoCreation(chatId, text);
+    } catch (error) {
+      console.error('[message handler] Video creation error:', error);
+      await bot.sendMessage(chatId, "❌ Video yaratishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.");
+    }
+    return;
+  }
+
   if (pendingImagePrompt.has(userId) && text && !isImageCommand) {
     try {
       console.log('[message handler] Image prompt detected:', text.slice(0, 50));
@@ -1084,6 +1289,13 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(chatId, "🧮 Misolingizni matn qilib yozing yoki rasm yuboring.\nMasalan: 3x + 7 = 22");
     } catch (error) {
       console.error('[message handler] Send math message error:', error.message);
+    }
+  } else if (text === "🎥 Video yaratish") {
+    pendingVideoPrompt.add(userId);
+    try {
+      await bot.sendMessage(chatId, "🎥 Qanday video kerak? Iltimos, o'zbekcha qisqacha tavsif yozing.");
+    } catch (error) {
+      console.error('[message handler] Send video prompt error:', error.message);
     }
   } else if (text === "🔔 Avtomatik bildirishnomalar") {
     addChat(chatId, getUserQuery(userId), getUserLabel(userId));
@@ -1153,6 +1365,30 @@ bot.on("callback_query", async (query) => {
   }
 });
 
+// ===================== WEB SERVER =====================
+app.post("/create-video", async (req, res) => {
+  const { chat_id, text } = req.body || {};
+  if (!chat_id || !text) {
+    return res.status(400).json({ error: "chat_id va text maydonlari kerak" });
+  }
+
+  try {
+    await handleVideoCreation(chat_id, text);
+    return res.status(200).json({ status: "ok", message: "Video so'rovi qabul qilindi" });
+  } catch (error) {
+    console.error("/create-video error:", error.message);
+    return res.status(500).json({ error: getAiErrorForUser(error) });
+  }
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", bot: "running", video_api: Boolean(process.env.VIDEO_API_URL) });
+});
+
+app.listen(PORT, () => {
+  console.log(`Express server ishga tushdi: http://0.0.0.0:${PORT}`);
+});
+
 bot.on("my_chat_member", (msg) => {
   const chatId = msg.chat.id;
   const status = msg.new_chat_member.status;
@@ -1219,10 +1455,13 @@ function sendHelp(chatId) {
     `/zomin — Zomin tumani\n` +
     `/cities — Shaharlar ro'yxati\n` +
     `/math misol — Matematik misolni yechish\n` +
+    `/video matn — Video yaratish uchun o'zbekcha tavsif yuborish\n` +
     `/subscribe — Bildirishnomani yoqish\n` +
     `/unsubscribe — Bildirishnomani o'chirish\n\n` +
     `<b>Matematika:</b>\n` +
     `🧮 Misolni matn qilib yozing yoki rasm qilib yuboring. Bot yozma yechim va ovozli tushuntirish yuboradi.\n\n` +
+    `<b>Video:</b>\n` +
+    `🎥 /video bilan o'zbekcha sahna tavsifini yozing. Bot sayt API orqali avtomatik prompt yaratadi va videoni yuboradi.\n\n` +
     `<b>Avtomatik xabarlar:</b>\n` +
     `🌅 08:00 — Bugungi ob-havo\n` +
     `🌙 21:00 — Ertangi kun bashorati\n` +

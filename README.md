@@ -7,6 +7,7 @@ O'zbek tilida ob-havo ma'lumotlari, matematika misollarini yechish, ovozli tushu
 - **🌤️ Ob-havo**: Har qanday O'zbekiston shahri uchun hozirgi ob-havo va 5 kunlik bashorat
 - **🧮 Matematika**: Misollarni matn yoki rasm qilib yechish, AI orqali yechim va ovozli tushuntirish
 - **🎨 Rasm yaratish**: Sun'iy intellekt orqali tasvirdan rasm yaratish
+- **🎥 Video yaratish**: Sayt API orqali video yaratish va Telegramga yuborish
 - **🔔 Avtomatik xabarlar**: Har kuni 08:00 va 21:00 da ob-havo bildirishnomasi
 
 ## 🚀 Railway'da Deployment
@@ -66,8 +67,29 @@ Railway'da **Variables** bo'limiga qo'shish kerak bo'lgan o'zgaruvchilar:
 | `OPENAI_API_KEY` | OpenAI API Key | Kerak (yoki Gemini) | `sk-...` |
 | `WEATHER_API_KEY` | OpenWeatherMap API Key | Ixtiyoriy | Default: `cfb18895da0d8bf04a8307cc8550fe0d` |
 | `GEMINI_MODEL` | Gemini model nomi | Ixtiyoriy | Default: `gemini-2.5-flash` |
+| `VIDEO_API_URL` | Video yaratish uchun sayt API manzili | Ixtiyoriy | `https://example.com/api/video` |
+| `VIDEO_API_KEY` | Video API kaliti | Ixtiyoriy | `your_video_api_key_here` |
+| `VIDEO_API_KEY_HEADER` | Video API uchun kalit header nomi | Ixtiyoriy | `Authorization` yoki `x-api-key` |
+| `VIDEO_API_EXTRA` | Qo'shimcha video API so'rov maydonchasi (JSON) | Ixtiyoriy | `{"model":"video-v1"}` |
 
-### 5. Kanal Tekshirish (A'zolik)
+### 5. Video API integratsiyasi
+Agar sayt orqali botga video yuborish kerak bo'lsa, `POST /create-video` endpoint ishlaydi.
+
+So'rov JSON formatida bo'lishi kerak:
+```json
+{
+  "chat_id": 123456789,
+  "text": "Bola ko'chada yoshi kattaroq insonga salom berdi"
+}
+```
+
+Bot API quyidagi parametrlarni kutadi:
+- `chat_id` — Telegram chat ID
+- `text` — o'zbek tilidagi sahna tavsifi
+
+Videodagi dialoglar 100% o'zbek tilida bo'lishi kerak, lekin prompt xizmati ingliz tilida yaratiladi.
+
+### 6. Kanal Tekshirish (A'zolik)
 
 Bot default o'rnatish bilan [@pythoncommands](https://t.me/pythoncommands) kanaliga a'zo bo'lishni talab qiladi.
 
@@ -86,7 +108,7 @@ npm install
 
 # .env faylni tayyorlash
 cp .env.example .env
-# .env'ni to'ldirish: TELEGRAM_BOT_TOKEN, GEMINI_API_KEY
+# .env'ni to'ldirish: TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, VIDEO_API_URL, VIDEO_API_KEY
 
 # Bot ishga tushirish
 npm start
