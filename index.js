@@ -551,7 +551,7 @@ async function generateImageWithHuggingFace(promptText) {
   }
 
   const response = await axios.post(
-    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
+    "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4",
     {
       inputs: promptText,
     },
@@ -856,7 +856,7 @@ const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: "🌤️ Hozirgi ob-havo" }, { text: "📅 5 kunlik bashorat" }],
     [{ text: "🏙️ Viloyatlar ro'yxati" }, { text: "⭐ Jizzax / Zomin" }],
-    [{ text: "🧮 Matematik misol yechish" }],
+    [{ text: "🧮 Matematik misol yechish" }, { text: "🎨 Rasm yaratish" }],
     [{ text: "ℹ️ Yordam" }],
     [{ text: "🔔 Avtomatik bildirishnomalar" }, { text: "❌ Bildirishnomani o'chirish" }],
   ],
